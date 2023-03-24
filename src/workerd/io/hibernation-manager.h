@@ -44,8 +44,16 @@ public:
   void unsetWebSocketAutoResponse() override;
   kj::Maybe<jsg::Ref<api::WebSocketRequestResponsePair>> getWebSocketAutoResponse() override;
   void setTimerChannel(TimerChannel& timerChannel) override;
+  kj::Maybe<TimerChannel&> getTimerChannel() override;
 
   friend class api::HibernatableWebSocketEvent;
+
+  // Sets/Unset the maximum time in Ms that an hibernatable websocket event can run for.
+  // If the timeout is reached, event is canceled.
+  void setEventTimeout(kj::Maybe<uint32_t> timeoutMs) override;
+
+  // Gets the event timeout if set.
+  kj::Maybe<int> getEventTimeout() override;
 
 private:
   class HibernatableWebSocket;
@@ -224,5 +232,6 @@ private:
   kj::TaskSet readLoopTasks;
   kj::Maybe<jsg::Ref<api::WebSocketRequestResponsePair>> autoResponsePair;
   kj::Maybe<TimerChannel&> timer;
+  kj::Maybe<uint32_t> eventTimeoutMs;
 };
 }; // namespace workerd

@@ -119,6 +119,10 @@ void HibernationManagerImpl::setTimerChannel(TimerChannel& timerChannel) {
   timer = timerChannel;
 }
 
+kj::Maybe<TimerChannel&> HibernationManagerImpl::getTimerChannel() {
+  return timer;
+}
+
 void HibernationManagerImpl::hibernateWebSockets(Worker::Lock& lock) {
   jsg::Lock& js(lock);
   js.withinHandleScope([&] {
@@ -132,6 +136,14 @@ void HibernationManagerImpl::hibernateWebSockets(Worker::Lock& lock) {
       }
     }
   });
+}
+
+void HibernationManagerImpl::setEventTimeout(kj::Maybe<uint32_t> timeoutMs) {
+  eventTimeoutMs = timeoutMs;
+}
+
+kj::Maybe<int> HibernationManagerImpl::getEventTimeout() {
+  return eventTimeoutMs;
 }
 
 void HibernationManagerImpl::dropHibernatableWebSocket(HibernatableWebSocket& hib) {

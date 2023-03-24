@@ -919,6 +919,36 @@ kj::Maybe<kj::Date> DurableObjectState::getWebSocketAutoResponseTimestamp(jsg::R
   return ws->getAutoResponseTimestamp();
 }
 
+void DurableObjectState::setHibernatableWebSocketEventTimeout(kj::Maybe<uint32_t> timeoutMs) {
+  auto& a = KJ_REQUIRE_NONNULL(IoContext::current().getActor());
+
+  KJ_IF_SOME(timeout, timeoutMs) {
+    if (timeout > 0) {
+      KJ_IF_SOME(hibernationManager, a.getHibernationManager()) {
+        hibernationManager.setEventTimeout(timeout);
+      } else {
+        a.setHibernationManager(kj::refcounted<HibernationManagerImpl>(
+            a.getLoopback(), KJ_REQUIRE_NONNULL(a.getHibernationEventType(), timeout)));
+      }
+    }
+  }
+
+  // Setting a timeout = 0ms or an empty value will unset any currently set event timeout.
+  // If there's no hibernation manager instantiated, we can skip the event timeout unsetting.
+  KJ_IF_SOME(hibernationManager, a.getHibernationManager()) {
+    hibernationManager.setEventTimeout(kj::none);
+  }
+}
+
+kj::Maybe<int> DurableObjectState::getHibernatableWebSocketEventTimeout() {
+  KJ_IF_SOME(a, IoContext::current().getActor()) {
+    KJ_IF_SOME(manager, a.getHibernationManager()) {
+      return manager.getEventTimeout();
+    }
+  }
+  return kj::none;
+}
+
 kj::Array<kj::byte> serializeV8Value(jsg::Lock& js, const jsg::JsValue& value) {
   jsg::Serializer serializer(js, jsg::Serializer::Options {
     .version = 15,

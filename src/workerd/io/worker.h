@@ -701,6 +701,9 @@ public:
     virtual void unsetWebSocketAutoResponse() = 0;
     virtual kj::Maybe<jsg::Ref<api::WebSocketRequestResponsePair>> getWebSocketAutoResponse() = 0;
     virtual void setTimerChannel(TimerChannel& timerChannel) = 0;
+    virtual kj::Maybe<TimerChannel&> getTimerChannel()  = 0;
+    virtual void setEventTimeout(kj::Maybe<uint32_t> timeoutMs) = 0;
+    virtual kj::Maybe<int> getEventTimeout() = 0;
   };
 
   // Create a new Actor hosted by this Worker. Note that this Actor object may only be manipulated

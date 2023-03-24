@@ -70,8 +70,7 @@ kj::Promise<WorkerInterface::CustomEvent::Result> HibernatableWebSocketCustomEve
     a.setHibernationManager(kj::addRef(KJ_REQUIRE_NONNULL(manager)));
   }
 
-  try {
-    co_await context.run(
+  auto promise = context.run(
         [entrypointName=entrypointName, &context, eventParameters=consumeParams()]
         (Worker::Lock& lock) mutable {
       KJ_SWITCH_ONEOF(eventParameters.eventType) {
@@ -106,6 +105,24 @@ kj::Promise<WorkerInterface::CustomEvent::Result> HibernatableWebSocketCustomEve
         KJ_UNREACHABLE;
       }
     });
+
+  try {
+    auto& hm = KJ_REQUIRE_NONNULL(manager);
+    KJ_IF_SOME(t, hm.getEventTimeout()) {
+      // If we setup a timeout we must provide a timerChannel.
+      auto& tc = KJ_REQUIRE_NONNULL(hm.getTimerChannel());
+
+      // We want to set a timeout for the hibernatable web socket event. Whichever promise
+      // resolves last will be canceled. If our timeout resolves first, we want to set
+      // the outcome as canceled.
+      outcome = co_await tc.atTime(tc.now()+(t)*kj::MILLISECONDS).then([]() {
+        return EventOutcome::EXCEPTION;
+      }).exclusiveJoin(kj::mv(promise).then([](){
+        return EventOutcome::OK;
+      }));
+    } else {
+      co_await promise;
+    }
   } catch(kj::Exception e) {
     if (auto desc = e.getDescription();
         !jsg::isTunneledException(desc) && !jsg::isDoNotLogException(desc)) {
@@ -157,12 +174,26 @@ kj::Promise<WorkerInterface::CustomEvent::Result>
     message.setWebsocketId(kj::mv(eventParameters.websocketId));
   }
 
-  return req.send().then([](auto resp) {
+  auto promise = req.send().then([](auto resp) {
     auto respResult = resp.getResult();
     return WorkerInterface::CustomEvent::Result {
       .outcome = respResult.getOutcome(),
     };
-  });
+  }).eagerlyEvaluate(nullptr);
+
+  KJ_IF_SOME(hm, manager) {
+    KJ_IF_SOME(t, hm.getEventTimeout()) {
+      auto &tc = KJ_REQUIRE_NONNULL(timerChannel);
+      // If we setup a timeout we must provide a timerChannel.
+      promise = tc.atTime(tc.now()+(t)*kj::MILLISECONDS).then([]() {
+        return WorkerInterface::CustomEvent::Result {
+              .outcome = EventOutcome::EXCEPTION,
+        };
+      }).exclusiveJoin(kj::mv(promise)).eagerlyEvaluate(nullptr);
+    }
+  }
+
+  return promise;
 }
 
 }  // namespace workerd::api

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <kj/debug.h>
+#include <kj/time.h>
 
 #include <workerd/io/worker-interface.capnp.h>
 #include <workerd/io/worker-interface.h>
@@ -121,6 +122,8 @@ private:
   uint16_t typeId;
   kj::TaskSet& waitUntilTasks;
   kj::OneOf<HibernatableSocketParams, kj::Own<HibernationReader>> params;
+  kj::Maybe<int> timeoutMs;
+  kj::Maybe<TimerChannel&> timerChannel;
   kj::Maybe<Worker::Actor::HibernationManager&> manager;
 };
 
