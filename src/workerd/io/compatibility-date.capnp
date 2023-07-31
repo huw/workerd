@@ -352,4 +352,12 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # In the WebCrypto API, the `publicExponent` field of the algorithm of RSA keys would previously
   # be an ArrayBuffer. Using this flag, publicExponent is a Uint8Array as mandated by the
   # specification.
+
+  jsRpc @37 :Bool
+      $compatEnableFlag("js_rpc")
+      $experimental;
+  # Enables JS RPC on the server side.
+  # The client stub is currently guarded by the experimental flag, however, we don't want to let
+  # experimental clients call JS methods over RPC if the Worker receiving the request hasn't
+  # explicitly exposed its methods to RPC.
 }
