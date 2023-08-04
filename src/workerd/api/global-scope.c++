@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "global-scope.h"
+#include "workerd/jsg/promise.h"
 
 #include <kj/encoding.h>
 
@@ -21,6 +22,7 @@
 #include <workerd/api/hibernatable-web-socket.h>
 #include <workerd/api/util.h>
 #include <workerd/util/stream-utils.h>
+#include <workerd/api/actor-destroy.h>
 
 namespace workerd::api {
 
@@ -521,6 +523,21 @@ void ServiceWorkerGlobalScope::sendHibernatableWebSocketError(
     }
     // We want to deliver an error, but if no webSocketError handler is exported, we shouldn't fail
   }
+}
+
+void ServiceWorkerGlobalScope::actorDestroy(Worker::Lock& lock,
+      kj::Maybe<ExportedHandler&> exportedHandler) {
+  IoContext::current().blockConcurrencyWhile(lock, [exportedHandler](jsg::Lock& js)
+      mutable -> jsg::Promise<bool> {
+    auto event = jsg::alloc<ActorDestroyEvent>();
+    KJ_IF_MAYBE(h, exportedHandler) {
+      KJ_IF_MAYBE(handler, h->destroy) {
+        auto promise = (*handler)(js);
+        event->waitUntil(kj::mv(promise));
+      }
+    }
+    return js.resolvedPromise(true);
+  });
 }
 
 void ServiceWorkerGlobalScope::emitPromiseRejection(

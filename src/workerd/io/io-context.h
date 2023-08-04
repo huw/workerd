@@ -842,6 +842,7 @@ public:
     return getIoChannelFactory().getGlobalActor(channel, id, kj::mv(locationHint), mode,
         kj::mv(parentSpan));
   }
+
   kj::Own<IoChannelFactory::ActorChannel> getColoLocalActorChannel(uint channel, kj::StringPtr id,
       SpanParent parentSpan) {
     return getIoChannelFactory().getColoLocalActor(channel, id, kj::mv(parentSpan));

@@ -188,10 +188,13 @@ struct ExportedHandler {
   typedef kj::Promise<void> HibernatableWebSocketErrorHandler(jsg::Ref<WebSocket>, jsg::Value);
   jsg::LenientOptional<jsg::Function<HibernatableWebSocketErrorHandler>> webSocketError;
 
+  typedef kj::Promise<void> ActorDestroyHandler();
+  jsg::LenientOptional<jsg::Function<ActorDestroyHandler>> destroy;
+
   // Self-ref potentially allows extracting other custom handlers from the object.
   jsg::SelfRef self;
 
-  JSG_STRUCT(fetch, tail, trace, scheduled, alarm, test, webSocketMessage, webSocketClose, webSocketError, self);
+  JSG_STRUCT(fetch, tail, trace, scheduled, alarm, test, webSocketMessage, webSocketClose, webSocketError, destroy, self);
 
   JSG_STRUCT_TS_ROOT();
   // ExportedHandler isn't included in the global scope, but we still want to
@@ -216,6 +219,7 @@ struct ExportedHandler {
     webSocketClose: never;
     webSocketError: never;
     queue?: ExportedHandlerQueueHandler<Env, QueueHandlerMessage>;
+    destroy: never;
     test?: ExportedHandlerTestHandler<Env>;
   });
   // Make `env` parameter generic
@@ -295,6 +299,9 @@ public:
       kj::Exception e,
       kj::String websocketId,
       Worker::Lock& lock,
+      kj::Maybe<ExportedHandler&> exportedHandler);
+
+  void actorDestroy(Worker::Lock& lock,
       kj::Maybe<ExportedHandler&> exportedHandler);
 
   void emitPromiseRejection(

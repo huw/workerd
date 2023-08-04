@@ -4,6 +4,7 @@
 
 #include "actor.h"
 #include "util.h"
+#include "workerd/jsg/promise.h"
 #include <workerd/io/features.h>
 #include <kj/encoding.h>
 #include <kj/compat/http.h>
@@ -172,26 +173,32 @@ jsg::Ref<DurableObjectNamespace> DurableObjectNamespace::jurisdiction(kj::String
       idFactory->cloneWithJurisdiction(jurisdiction));
 }
 
-kj::Promise<void> DurableObjectNamespace::destroy(jsg::Ref<DurableObjectId> id) {
-  return destroyImpl(kj::mv(id), ActorGetMode::GET_OR_CREATE);
+kj::Promise<void> DurableObjectNamespace::destroy(jsg::Lock& js, jsg::Ref<DurableObjectId> id) {
+  // We don't care about creating an actor just to destroy it.
+  // But for now let's keep it because workerd only supports GET_OR_CREATE mode for getting actor stubs.
+  // TODO(now): disable GET_OR_CREATE for destroy.
+  return destroyImpl(js, kj::mv(id), ActorGetMode::GET_OR_CREATE);
 }
 
-kj::Promise<void> DurableObjectNamespace::destroyExisting(jsg::Ref<DurableObjectId> id) {
-  return destroyImpl(kj::mv(id), ActorGetMode::GET_EXISTING);
+kj::Promise<void> DurableObjectNamespace::destroyExisting(jsg::Lock& js, jsg::Ref<DurableObjectId> id) {\
+  return destroyImpl(js, kj::mv(id), ActorGetMode::GET_EXISTING);
 }
 
-kj::Promise<void> DurableObjectNamespace::destroyImpl(jsg::Ref<DurableObjectId> id, ActorGetMode mode) {
+kj::Promise<void> DurableObjectNamespace::destroyImpl(jsg::Lock& js, jsg::Ref<DurableObjectId> id, ActorGetMode mode) {
   JSG_REQUIRE(idFactory->matchesJurisdiction(id->getInner()), TypeError,
       "destroy called on jurisdictional subnamespace with an ID from a different jurisdiction");
 
   auto& context = IoContext::current();
-  auto actorChannel = context.getGlobalActorChannel(channel, id->getInner(), nullptr,
-          mode);
 
-  auto workerInterface = actorChannel->startRequest({});
+  // TODO(now): set correct span information.
+  auto actorChannel = context.getGlobalActorChannel(channel, id->getInner(), kj::none,
+          mode, SpanParent(kj::none));
+
   // We now have a worker interface to work with.
+  auto workerInterface = actorChannel->startRequest({});
 
-  return kj::READY_NOW;
+  // TODO(now): Set correct eventTypeId for ActorDestroy events.
+  co_await workerInterface->customEvent(kj::heap<api::ActorDestroyCustomEventImpl>(10));
 }
 
 }  // namespace workerd::api

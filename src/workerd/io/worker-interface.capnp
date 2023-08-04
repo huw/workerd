@@ -168,6 +168,15 @@ interface HibernatableWebSocketEventDispatcher {
   # Run a hibernatable websocket event
 }
 
+
+struct ActorDestroyResponse {
+  outcome @0 :EventOutcome;
+}
+
+interface ActorDestroyEventDispatcher {
+  actorDestroyEvent @0 () -> (result :ActorDestroyResponse);
+}
+
 interface EventDispatcher @0xf20697475ec1752d {
   # Interface used to deliver events to a Worker's global event handlers.
 

@@ -13,6 +13,7 @@
 #include <capnp/compat/http-over-capnp.h>
 #include <workerd/api/http.h>
 #include <workerd/jsg/jsg.h>
+#include <workerd/api/actor-destroy.h>
 
 namespace workerd {
   template <typename T> class IoOwn;
@@ -168,13 +169,13 @@ public:
   // Creates a subnamespace with the jurisdiction hardcoded.
   jsg::Ref<DurableObjectNamespace> jurisdiction(kj::String jurisdiction);
 
-  kj::Promise<void> destroy(jsg::Ref<DurableObjectId> id);
   // Destroys the durable object identified with id in this namespace including all data associated
   // to it.
+  kj::Promise<void> destroy(jsg::Lock& js, jsg::Ref<DurableObjectId> id);
 
-  kj::Promise<void> destroyExisting(jsg::Ref<DurableObjectId> id);
   // Destroys the durable object identified with id in this namespace including all data associated
   // to it. This variation will get a durable object by ID if it already exists.
+  kj::Promise<void> destroyExisting(jsg::Lock& js, jsg::Ref<DurableObjectId> id);
 
   JSG_RESOURCE_TYPE(DurableObjectNamespace, CompatibilityFlags::Reader flags) {
     JSG_METHOD(newUniqueId);
@@ -187,7 +188,7 @@ public:
     JSG_METHOD(jurisdiction);
     if (flags.getDurableObjectDestroy()){
       if (flags.getDurableObjectGetExisting()) {
-        JSG_METHOD(destroyExisting);
+        JSG_METHOD_NAMED(destroy, destroyExisting);
       } else {
         JSG_METHOD(destroy);
       }
@@ -209,7 +210,7 @@ private:
       jsg::Ref<DurableObjectId> id,
       jsg::Optional<GetDurableObjectOptions> options);
 
-  kj::Promise<void> destroyImpl(jsg::Ref<DurableObjectId> id, ActorGetMode mode);
+  kj::Promise<void> destroyImpl(jsg::Lock& js, jsg::Ref<DurableObjectId> id, ActorGetMode mode);
 };
 
 #define EW_ACTOR_ISOLATE_TYPES                      \

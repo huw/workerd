@@ -353,7 +353,7 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # be an ArrayBuffer. Using this flag, publicExponent is a Uint8Array as mandated by the
   # specification.
 
-  durableObjectDestroy @35 :Bool
+  durableObjectDestroy @37 :Bool
     $compatEnableFlag("durable_object_destroy")
     $experimental;
   # Enables namespace.destroy(id) durable object experimental API.
