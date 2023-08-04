@@ -352,4 +352,9 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # In the WebCrypto API, the `publicExponent` field of the algorithm of RSA keys would previously
   # be an ArrayBuffer. Using this flag, publicExponent is a Uint8Array as mandated by the
   # specification.
+
+  durableObjectDestroy @35 :Bool
+    $compatEnableFlag("durable_object_destroy")
+    $experimental;
+  # Enables namespace.destroy(id) durable object experimental API.
 }

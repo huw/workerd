@@ -172,4 +172,26 @@ jsg::Ref<DurableObjectNamespace> DurableObjectNamespace::jurisdiction(kj::String
       idFactory->cloneWithJurisdiction(jurisdiction));
 }
 
+kj::Promise<void> DurableObjectNamespace::destroy(jsg::Ref<DurableObjectId> id) {
+  return destroyImpl(kj::mv(id), ActorGetMode::GET_OR_CREATE);
+}
+
+kj::Promise<void> DurableObjectNamespace::destroyExisting(jsg::Ref<DurableObjectId> id) {
+  return destroyImpl(kj::mv(id), ActorGetMode::GET_EXISTING);
+}
+
+kj::Promise<void> DurableObjectNamespace::destroyImpl(jsg::Ref<DurableObjectId> id, ActorGetMode mode) {
+  JSG_REQUIRE(idFactory->matchesJurisdiction(id->getInner()), TypeError,
+      "destroy called on jurisdictional subnamespace with an ID from a different jurisdiction");
+
+  auto& context = IoContext::current();
+  auto actorChannel = context.getGlobalActorChannel(channel, id->getInner(), nullptr,
+          mode);
+
+  auto workerInterface = actorChannel->startRequest({});
+  // We now have a worker interface to work with.
+
+  return kj::READY_NOW;
+}
+
 }  // namespace workerd::api
