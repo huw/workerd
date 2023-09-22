@@ -79,7 +79,20 @@ private:
           activeOrPackage(kj::mv(websocket)),
           // Extract's the kj::Own<kj::WebSocket> from api::WebSocket so the HibernatableWebSocket
           // can own it. The api::WebSocket retains a reference to our ws.
-          ws(activeOrPackage.get<jsg::Ref<api::WebSocket>>()->acceptAsHibernatable()),
+          ws(activeOrPackage.get<jsg::Ref<api::WebSocket>>()->acceptAsHibernatable(
+              // TODO(now): This is a bit scary because we're accepting the api::WebSocket
+              // and giving it a way to call getTags() BEFORE the tags have actually been stored
+              // in the HibernatableWebSocket (see HibernationManager::acceptWebSocket).
+              //
+              //  - I'm not sure this even matters because ActorState::acceptWebSocket() returns
+              //    after HibernationManager::acceptWebSocket(), so JS probably won't run until
+              //    we're done here?
+              //
+              //  - I wonder if we should delay calling acceptAsHibernatable() until
+              //    HibernationManager::acceptWebSocket() finishes constructing tags...
+              //    Leaving this comment until I have fresh eyes on Monday.
+              kj::Function<kj::Array<kj::String>()>([&](){ return getTags(); })
+          )),
           manager(manager) {}
 
     ~HibernatableWebSocket() noexcept(false) {
@@ -103,18 +116,41 @@ private:
       }
     }
 
+    // TODO(now): We can probably return an ArrayPtr<StringPtr> instead, and then when we
+    // *REALLY* need to store tags in api::WebSocket, we can return a kj::Array<kj::String>.
+    //
+    // Returns the tags associated with this HibernatableWebSocket.
+    kj::Array<kj::String> getTags() {
+      auto tags = kj::heapArray<kj::String>(tagItems.size());
+      for (auto i: kj::indices(tagItems)) {
+        tags[i] = kj::str(tagItems[i].tag);
+      }
+      return kj::mv(tags);
+    }
+
     // Returns a reference to the active websocket. If the websocket is currently hibernating,
     // we have to unhibernate it first. The process moves values from the HibernatableWebSocket
     // to the api::WebSocket.
-    jsg::Ref<api::WebSocket> getActiveOrUnhibernate(jsg::Lock& js) {
+    jsg::Ref<api::WebSocket> getActiveOrUnhibernate(
+        jsg::Lock& js,
+        api::HibernatableWebSocketStatus activationStatus) {
       KJ_IF_SOME(package, activeOrPackage.tryGet<api::WebSocket::HibernationPackage>()) {
+        // Provide the function pointer for the api::WebSocket to be able to access our tags.
+        package.maybeTags = kj::Function<kj::Array<kj::String>()>([&](){ return getTags(); });
+
         activeOrPackage.init<jsg::Ref<api::WebSocket>>(
             api::WebSocket::hibernatableFromNative(js, *KJ_REQUIRE_NONNULL(ws), kj::mv(package))
         )->setAutoResponseTimestamp(autoResponseTimestamp);
         // Now that we unhibernated the WebSocket, we can set the last received autoResponse timestamp
         // that was stored in the corresponding HibernatableWebSocket.
       }
-      return activeOrPackage.get<jsg::Ref<api::WebSocket>>().addRef();
+      auto webSocketRef = activeOrPackage.get<jsg::Ref<api::WebSocket>>().addRef();
+      if (activationStatus == api::HibernatableWebSocketStatus::DESTROYING) {
+        // This HibernatableWebSocket will be destroyed, so we need to move the tags into the
+        // api::WebSocket.
+        webSocketRef->transferHibernatableTags(getTags());
+      }
+      return kj::mv(webSocketRef);
     }
 
     kj::ListLink<HibernatableWebSocket> link;

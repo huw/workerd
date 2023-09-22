@@ -26,7 +26,8 @@ HibernatableWebSocketEvent::ItemsForRelease HibernatableWebSocketEvent::prepareF
 
   // Note that we don't call `claimWebSocket()` to get this, since we would lose our reference to
   // the HibernatableWebSocket (it removes it from `webSocketsForEventHandler`).
-  auto websocketRef = hibernatableWebSocket.value->getActiveOrUnhibernate(lock);
+  auto websocketRef = hibernatableWebSocket.value->getActiveOrUnhibernate(lock,
+      HibernatableWebSocketStatus::DESTROYING);
   auto ownedWebSocket = kj::mv(KJ_REQUIRE_NONNULL(hibernatableWebSocket.value->ws));
 
   // Now that we've obtained the websocket for the event, let's free up the slots we had allocated.
@@ -46,7 +47,8 @@ jsg::Ref<WebSocket> HibernatableWebSocketEvent::claimWebSocket(jsg::Lock& lock,
       manager.webSocketsForEventHandler.findEntry(websocketId));
 
   // Get the reference.
-  auto websocket = hibernatableWebSocket.value->getActiveOrUnhibernate(lock);
+  auto websocket = hibernatableWebSocket.value->getActiveOrUnhibernate(lock,
+      HibernatableWebSocketStatus::ACTIVE);
 
   // Now that we've obtained the websocket, we need to remove the entry from the map and make the
   // key available again.

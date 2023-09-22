@@ -225,15 +225,25 @@ public:
   static constexpr int READY_STATE_CLOSED = 3;
 
   // Creates the Native object when we recreate the WebSocket when waking from hibernation.
-  IoOwn<Native> initNative(IoContext& ioContext, kj::WebSocket& ws, bool closedOutgoingConn);
+  IoOwn<Native> initNative(
+      IoContext& ioContext,
+      kj::WebSocket& ws,
+      kj::Function<kj::Array<kj::String>()> tags,
+      bool closedOutgoingConn);
 
   // Some properties of the `api::WebSocket` that need to survive hibernation. When we initiate
   // the hibernation process, we want to move these properties out of the `api::WebSocket`.
+  // When we recreate the websocket due to activity, we move the properties back in.
   struct HibernationPackage {
     kj::Maybe<kj::String> url;
     kj::Maybe<kj::String> protocol;
     kj::Maybe<kj::String> extensions;
     kj::Maybe<kj::Array<byte>> serializedAttachment;
+
+    // `maybeTags` is empty when we're initiating hibernation (see `buildPackageForHibernation`),
+    // and has a Function when we're recreating the api::WebSocket.
+    kj::Maybe<kj::Function<kj::Array<kj::String>()>> maybeTags;
+
     // True forever once the JS WebSocket calls `close()`.
     bool closedOutgoingConnection = false;
   };
@@ -277,14 +287,19 @@ public:
 
   // Extract the kj::WebSocket from this api::WebSocket (if applicable). The kj::WebSocket will be
   // owned elsewhere, but the api::WebSocket will retain a reference.
-  kj::Own<kj::WebSocket> acceptAsHibernatable() {
+  // The `tags` parameter is a function pointer that lets the api::WebSocket access the tags it was
+  // accepted with.
+  kj::Own<kj::WebSocket> acceptAsHibernatable(kj::Function<kj::Array<kj::String>()> tags) {
     KJ_IF_SOME(hibernatable, farNative->state.tryGet<AwaitingAcceptanceOrCoupling>()) {
       // We can only request hibernation if we have not called accept.
       auto ws = kj::mv(hibernatable.ws);
       // We pass a reference to the kj::WebSocket for the api::WebSocket to refer to when calling
       // `send()` or `close()`.
       farNative->state.init<Accepted>(
-          Accepted::Hibernatable{ .ws = *ws }, *farNative, IoContext::current());
+          Accepted::Hibernatable {
+              .ws = *ws,
+              .tagsRef = kj::mv(tags) },
+          *farNative, IoContext::current());
       return kj::mv(ws);
     }
     JSG_FAIL_REQUIRE(TypeError,
@@ -292,6 +307,19 @@ public:
   }
 
   void tryReleaseNative(jsg::Lock& js);
+
+  // Accesses the tags of the hibernatable websocket.
+  kj::Array<kj::String> getHibernatableTags() {
+    auto& accepted = KJ_REQUIRE_NONNULL(farNative->state.tryGet<Accepted>());
+    JSG_REQUIRE(accepted.isHibernatable(), Error, "only hibernatable websockets can have tags.");
+    return accepted.ws.getHibernatableTags();
+  }
+
+  void transferHibernatableTags(kj::Array<kj::String> arr) {
+    auto& accepted = KJ_REQUIRE_NONNULL(farNative->state.tryGet<Accepted>());
+    JSG_REQUIRE(accepted.isHibernatable(), Error, "only hibernatable websockets can have tags.");
+    accepted.ws.setHibernatableTags(kj::mv(arr));
+  }
 
   enum class HibernatableReleaseState {
     // The way we release Hibernatable WebSockets slightly differs from regular WebSockets.
@@ -359,6 +387,7 @@ public:
       .protocol = kj::mv(protocol),
       .extensions = kj::mv(extensions),
       .serializedAttachment = kj::mv(serializedAttachment),
+      .maybeTags = kj::none,
       .closedOutgoingConnection = closedOutgoingForHib,
     };
   }
@@ -497,6 +526,22 @@ private:
       // If we are "releasing", we may prevent the websocket from doing certain things like calling
       // send/close. We're more restrictive if we're delivering an Error than delivering a Close.
       HibernatableReleaseState releaseState = HibernatableReleaseState::NONE;
+
+    // There are two possible states for tagsRef:
+    //  1. kj::Function
+    //          - A function pointer that lets us call HibernatableWebSocket::getTags()
+    //            from api::WebSocket.
+    //          - So long as the HibernatableWebSocket is around, we can just use call its method.
+    //  2. kj::Array<kj::String>
+    //          - An array of the tags.
+    //          - We're going to be dispatching a Close or an Error event, i.e. the
+    //            HibernatableWebSocket is free to go away. We can no longer rely on its getTags()
+    //            method, so instead we move the data into the api::WebSocket.
+    //
+    // We could just copy all tags into api::WebSocket everytime we reactivate/wake from
+    // hibernation, but it could add up to 2.56KB of memory for each websocket.
+    // With a maximum of 32k websockets, that could put a lot of memory pressure on the DO.
+      kj::OneOf<kj::Function<kj::Array<kj::String>()>, kj::Array<kj::String>> tagsRef;
     };
 
     explicit Accepted(kj::Own<kj::WebSocket> ws, Native& native, IoContext& context);
@@ -547,6 +592,37 @@ private:
 
       kj::Maybe<Hibernatable&> getIfHibernatable() {
         return inner.tryGet<Hibernatable>();
+      }
+
+      kj::Array<kj::String> getHibernatableTags() {
+        KJ_SWITCH_ONEOF(KJ_REQUIRE_NONNULL(inner.tryGet<Hibernatable>()).tagsRef) {
+          KJ_CASE_ONEOF(fn, kj::Function<kj::Array<kj::String>()>) {
+            // Tags still owned by HibernatableWebSocket, call the functon pointer.
+            return fn();
+          }
+          KJ_CASE_ONEOF(arr, kj::Array<kj::String>) {
+            // TODO(now): We can probably return an ArrayPtr<StringPtr> if we do the same in
+            // HibernatableWebSocket::getTags(). After all, the array is either owned there, or here
+            // (in Hibernatable).
+            //
+            // We have the array already, let's copy it and return.
+            auto cpy = kj::heapArray<kj::String>(arr.size());
+            for (auto& i: kj::indices(arr)) {
+              cpy[i] = kj::str(arr[i]);
+            }
+            return kj::mv(cpy);
+          }
+        }
+        KJ_UNREACHABLE;
+      }
+
+      // The HibernatableWebSocket is going away; we need to move the tags here.
+      void setHibernatableTags(kj::Array<kj::String> arr) {
+        auto& hib = KJ_REQUIRE_NONNULL(inner.tryGet<Hibernatable>());
+        // Doing negation check because kj::OneOf got made when checking if it's a Function.
+        KJ_REQUIRE(!hib.tagsRef.is<kj::Array<kj::String>>(),
+            "tried to move tags into api::WebSocket when they were already there!");
+        hib.tagsRef.init<kj::Array<kj::String>>(kj::mv(arr));
       }
 
       // Transitions our Hibernatable websocket to a "Releasing" state.

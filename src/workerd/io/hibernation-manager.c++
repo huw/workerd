@@ -86,13 +86,13 @@ kj::Vector<jsg::Ref<api::WebSocket>> HibernationManagerImpl::getWebSockets(
       auto& list = *((item)->list);
       for (auto& entry: list) {
         auto& hibWS = KJ_REQUIRE_NONNULL(entry.hibWS);
-        matches.add(hibWS.getActiveOrUnhibernate(js));
+        matches.add(hibWS.getActiveOrUnhibernate(js, api::HibernatableWebSocketStatus::ACTIVE));
       }
     }
   } else {
     // Add all websockets!
     for (auto& hibWS : allWs) {
-      matches.add(hibWS->getActiveOrUnhibernate(js));
+      matches.add(hibWS->getActiveOrUnhibernate(js, api::HibernatableWebSocketStatus::ACTIVE));
     }
   }
   return kj::mv(matches);

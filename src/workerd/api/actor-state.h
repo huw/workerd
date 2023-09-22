@@ -460,6 +460,10 @@ public:
   // Get the last auto response timestamp or null
   kj::Maybe<kj::Date> getWebSocketAutoResponseTimestamp(jsg::Ref<WebSocket> ws);
 
+  // Gets an array of tags that this websocket was accepted with.
+  // TODO(now): Should this throw if you provide a non-hibernatable websocket?
+  kj::Array<kj::String> getTags(jsg::Lock& js, jsg::Ref<api::WebSocket> ws);
+
   JSG_RESOURCE_TYPE(DurableObjectState, CompatibilityFlags::Reader flags) {
     JSG_METHOD(waitUntil);
     JSG_READONLY_INSTANCE_PROPERTY(id, getId);
@@ -470,6 +474,7 @@ public:
     JSG_METHOD(setWebSocketAutoResponse);
     JSG_METHOD(getWebSocketAutoResponse);
     JSG_METHOD(getWebSocketAutoResponseTimestamp);
+    JSG_METHOD(getTags);
 
     if (flags.getWorkerdExperimental()) {
       // TODO(someday): This currently exists for testing purposes only but maybe it could be

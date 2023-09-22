@@ -48,4 +48,10 @@ namespace workerd::api {
       return eventType.is<Close>();
     }
   };
+
+  enum class HibernatableWebSocketStatus {
+    // We are in the DESTROYING state when we are going to deliver a Close or an Error event.
+    DESTROYING,
+    ACTIVE,
+  };
 }; // namespace workerd::api

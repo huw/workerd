@@ -919,6 +919,10 @@ kj::Maybe<kj::Date> DurableObjectState::getWebSocketAutoResponseTimestamp(jsg::R
   return ws->getAutoResponseTimestamp();
 }
 
+kj::Array<kj::String> DurableObjectState::getTags(jsg::Lock& js, jsg::Ref<api::WebSocket> ws) {
+  return ws->getHibernatableTags();
+}
+
 kj::Array<kj::byte> serializeV8Value(jsg::Lock& js, const jsg::JsValue& value) {
   jsg::Serializer serializer(js, jsg::Serializer::Options {
     .version = 15,

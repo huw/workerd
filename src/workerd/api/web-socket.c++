@@ -28,9 +28,13 @@ kj::StringPtr KJ_STRINGIFY(const WebSocket::NativeState& state) {
 IoOwn<WebSocket::Native> WebSocket::initNative(
     IoContext& ioContext,
     kj::WebSocket& ws,
+    kj::Function<kj::Array<kj::String>()> tags,
     bool closedOutgoingConn) {
   auto nativeObj = kj::heap<Native>();
-  nativeObj->state.init<Accepted>(Accepted::Hibernatable{.ws = ws}, *nativeObj, ioContext);
+  nativeObj->state.init<Accepted>(Accepted::Hibernatable {
+      .ws = ws,
+      .tagsRef = kj::mv(tags) },
+      *nativeObj, ioContext);
   // We might have called `close()` when this WebSocket was previously active.
   // If so, we want to prevent any future calls to `send()`.
   nativeObj->closedOutgoing = closedOutgoingConn;
@@ -45,7 +49,11 @@ WebSocket::WebSocket(jsg::Lock& js,
       protocol(kj::mv(package.protocol)),
       extensions(kj::mv(package.extensions)),
       serializedAttachment(kj::mv(package.serializedAttachment)),
-      farNative(initNative(ioContext, ws, package.closedOutgoingConnection)),
+      farNative(
+          initNative(ioContext,
+              ws,
+              kj::mv(KJ_REQUIRE_NONNULL(package.maybeTags)),
+              package.closedOutgoingConnection)),
       outgoingMessages(IoContext::current().addObject(kj::heap<OutgoingMessagesMap>())),
       locality(LOCAL) {}
   // This constructor is used when reinstantiating a websocket that had been hibernating, which is
