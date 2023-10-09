@@ -40,8 +40,7 @@ public:
   // This converts our activeOrPackage from an api::WebSocket to a HibernationPackage.
   void hibernateWebSockets(Worker::Lock& lock) override;
 
-  void setWebSocketAutoResponse(jsg::Ref<api::WebSocketRequestResponsePair> reqResp) override;
-  void unsetWebSocketAutoResponse() override;
+  void setWebSocketAutoResponse(kj::Maybe<jsg::Ref<api::WebSocketRequestResponsePair>> reqResp) override;
   kj::Maybe<jsg::Ref<api::WebSocketRequestResponsePair>> getWebSocketAutoResponse() override;
   void setTimerChannel(TimerChannel& timerChannel) override;
   kj::Maybe<TimerChannel&> getTimerChannel() override;

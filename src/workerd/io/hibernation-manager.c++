@@ -99,12 +99,12 @@ kj::Vector<jsg::Ref<api::WebSocket>> HibernationManagerImpl::getWebSockets(
 }
 
 void HibernationManagerImpl::setWebSocketAutoResponse(
-    jsg::Ref<api::WebSocketRequestResponsePair> reqResp) {
-  autoResponsePair = kj::mv(reqResp);
-}
-
-void HibernationManagerImpl::unsetWebSocketAutoResponse() {
-  autoResponsePair = kj::none;
+    kj::Maybe<jsg::Ref<api::WebSocketRequestResponsePair>> reqResp) {
+  KJ_IF_SOME(rr, reqResp){
+    autoResponsePair = kj::mv(rr);
+  } else {
+    autoResponsePair = kj::none;
+  }
 }
 
 kj::Maybe<jsg::Ref<api::WebSocketRequestResponsePair>> HibernationManagerImpl::getWebSocketAutoResponse() {

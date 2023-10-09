@@ -880,7 +880,7 @@ void DurableObjectState::setWebSocketAutoResponse(
     // If there's no request/response pair, we unset any current set auto response configuration.
     KJ_IF_SOME(manager, a.getHibernationManager()) {
       // If there's no hibernation manager created yet, there's nothing to do here.
-      manager.unsetWebSocketAutoResponse();
+      manager.setWebSocketAutoResponse(kj::none);
     }
     return;
   }
