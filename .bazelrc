@@ -2,6 +2,9 @@ common --enable_platform_specific_config
 build --verbose_failures
 build --build_tag_filters=-off-by-default
 
+# Not using bzlmod for dependencies yet
+common --noenable_bzlmod
+
 # Enable webgpu
 build --//src/workerd/io:enable_experimental_webgpu=True
 
@@ -23,10 +26,6 @@ build:windows --per_file_copt='external/v8/src/compiler/graph-visualizer.cc@/std
 # Need to redefine _WIN32_WINNT to build dawn on Windows
 build:windows --per_file_copt='external/dawn@-Wno-macro-redefined'
 build:windows --host_per_file_copt='external/dawn@-Wno-macro-redefined'
-
-# Speed up sandboxed compilation, particularly on I/O-constrained and non-Linux systems
-# https://bazel.build/reference/command-line-reference#flag--reuse_sandbox_directories
-build --reuse_sandbox_directories
 
 # optimized LTO build. you'll need a fairly recent clang for this to work
 build:thin-lto -c opt
