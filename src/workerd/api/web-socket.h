@@ -428,9 +428,16 @@ public:
     JSG_METHOD(deserializeAttachment);
 
     JSG_STATIC_CONSTANT(READY_STATE_CONNECTING);
+    JSG_STATIC_CONSTANT_ALIAS(CONNECTING, WebSocket::READY_STATE_CONNECTING);
+
     JSG_STATIC_CONSTANT(READY_STATE_OPEN);
+    JSG_STATIC_CONSTANT_ALIAS(OPEN, WebSocket::READY_STATE_OPEN);
+
     JSG_STATIC_CONSTANT(READY_STATE_CLOSING);
+    JSG_STATIC_CONSTANT_ALIAS(CLOSING, WebSocket::READY_STATE_CLOSING);
+
     JSG_STATIC_CONSTANT(READY_STATE_CLOSED);
+    JSG_STATIC_CONSTANT_ALIAS(CLOSED, WebSocket::READY_STATE_CLOSED);
 
     // Previously, we were setting all properties as instance properties,
     // which broke the ability to subclass the Event object. With the
