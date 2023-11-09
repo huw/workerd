@@ -54,7 +54,7 @@ jobs:
         if: matrix.os.name == 'linux'
         # Install dependencies, including clang via through LLVM APT repository. Note that this
         # will also install lldb and clangd alongside dependencies, which can be removed with
-        # `sudo apt-get remove -y lldb-15 clangd-15; sudo apt-get autoremove -y` if space is
+        # `sudo apt-get remove -y lldb-16 clangd-16; sudo apt-get autoremove -y` if space is
         # limited.
         # libunwind, libc++abi1 and libc++1 should be automatically installed as dependencies of
         # libc++, but this appears to cause errors so they are also being explicitly installed.
@@ -64,14 +64,14 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           wget https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
-          sudo ./llvm.sh 15
-          sudo apt-get install -y libunwind-15 libc++abi1-15 libc++1-15 libc++-15-dev libclang-rt-15-dev
-          echo "build:linux --action_env=CC=/usr/lib/llvm-15/bin/clang --action_env=CXX=/usr/lib/llvm-15/bin/clang++" >> .bazelrc
-          echo "build:linux --host_action_env=CC=/usr/lib/llvm-15/bin/clang --host_action_env=CXX=/usr/lib/llvm-15/bin/clang++" >> .bazelrc
-          sed -i -e "s%llvm-symbolizer%/usr/lib/llvm-15/bin/llvm-symbolizer%" .bazelrc
+          sudo ./llvm.sh 16
+          sudo apt-get install -y libunwind-16 libc++abi1-16 libc++1-16 libc++-16-dev libclang-rt-16-dev
+          echo "build:linux --action_env=CC=/usr/lib/llvm-16/bin/clang --action_env=CXX=/usr/lib/llvm-16/bin/clang++" >> .bazelrc
+          echo "build:linux --host_action_env=CC=/usr/lib/llvm-16/bin/clang --host_action_env=CXX=/usr/lib/llvm-16/bin/clang++" >> .bazelrc
+          sed -i -e "s%llvm-symbolizer%/usr/lib/llvm-16/bin/llvm-symbolizer%" .bazelrc
       - name: Setup macOS
         if: matrix.os.name == 'macOS'
-        # TODO: We want to symbolize stacks for crashes on CI. Xcode is currently based on LLVM 15
+        # TODO: We want to symbolize stacks for crashes on CI. Xcode is currently based on LLVM 16
         # and the macos-13 image has llvm@15 installed:
         # https://github.com/actions/runner-images/blob/main/images/macos/macos-13-Readme.md
         #

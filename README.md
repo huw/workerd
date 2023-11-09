@@ -72,10 +72,10 @@ To build `workerd`, you need:
 * [Bazel](https://bazel.build/)
   * If you use [Bazelisk](https://github.com/bazelbuild/bazelisk) (recommended), it will automatically download and use the right version of Bazel for building workerd.
 * On Linux:
-  * We use the clang/LLVM toolchain to build workerd and support version 15 and higher. Earlier versions of clang may still work, but are not officially supported.
-  * Clang 15+ (e.g. package `clang-15` on Debian Bookworm).
-  * libc++ 15+ (e.g. packages `libc++-15-dev` and `libc++abi-15-dev`)
-  * LLD 15+ (e.g. package `lld-15`).
+  * We use the clang/LLVM toolchain to build workerd and support version 16 and higher. Earlier versions of clang may still work, but are not officially supported.
+  * Clang 16+ (e.g. package `clang-16` on Debian Bookworm).
+  * libc++ 16+ (e.g. packages `libc++-16-dev` and `libc++abi-16-dev`)
+  * LLD 16+ (e.g. package `lld-16`).
   * `python3` and `python3-distutils`
 * On macOS:
   * Xcode 15 installation (available on macOS 13 and higher)
@@ -177,7 +177,7 @@ Prebuilt binaries are distributed via `npm`. Run `npx workerd ...` to use these.
 * On Linux:
   * glibc 2.31 or higher (already included on e.g. Ubuntu 20.04, Debian Bullseye)
 * On macOS:
-  * macOS 11 or higher
+  * macOS 11.5 or higher
   * The Xcode command line tools, which can be installed with `xcode-select --install`
 
 ### Local Worker development with `wrangler`
