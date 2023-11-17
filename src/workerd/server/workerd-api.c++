@@ -269,6 +269,84 @@ kj::Array<Worker::Script::CompiledGlobal> WorkerdApiIsolate::compileScriptGlobal
   return compiledGlobals.finish();
 }
 
+kj::Maybe<jsg::ModuleRegistry::ModuleInfo> WorkerdApiIsolate::tryCompileModule(
+    jsg::Lock& js,
+    config::Worker::Module::Reader module,
+    jsg::CompilationObserver& observer,
+    CompatibilityFlags::Reader featureFlags) {
+  auto& lock = kj::downcast<JsgWorkerdIsolate::Lock>(js);
+  switch (module.which()) {
+    case config::Worker::Module::TEXT: {
+      return jsg::ModuleRegistry::ModuleInfo(
+          lock,
+          module.getName(),
+          kj::none,
+          jsg::ModuleRegistry::TextModuleInfo(lock,
+              Impl::compileTextGlobal(lock, module.getText())));
+    }
+    case config::Worker::Module::DATA: {
+      return jsg::ModuleRegistry::ModuleInfo(
+          lock,
+          module.getName(),
+          kj::none,
+          jsg::ModuleRegistry::DataModuleInfo(
+              lock,
+              Impl::compileDataGlobal(lock, module.getData()).As<v8::ArrayBuffer>()));
+    }
+    case config::Worker::Module::WASM: {
+      return jsg::ModuleRegistry::ModuleInfo(
+          lock,
+          module.getName(),
+          kj::none,
+          jsg::ModuleRegistry::WasmModuleInfo(lock,
+              Impl::compileWasmGlobal(lock, module.getWasm(), observer)));
+    }
+    case config::Worker::Module::JSON: {
+        return jsg::ModuleRegistry::ModuleInfo(
+            lock,
+            module.getName(),
+            kj::none,
+            jsg::ModuleRegistry::JsonModuleInfo(lock,
+                Impl::compileJsonGlobal(lock, module.getJson())));
+    }
+    case config::Worker::Module::ES_MODULE: {
+      return jsg::ModuleRegistry::ModuleInfo(
+          lock,
+          module.getName(),
+          module.getEsModule(),
+          jsg::ModuleInfoCompileOption::BUNDLE,
+          observer);
+    }
+    case config::Worker::Module::COMMON_JS_MODULE: {
+      return jsg::ModuleRegistry::ModuleInfo(
+          lock,
+          module.getName(),
+          kj::none,
+          jsg::ModuleRegistry::CommonJsModuleInfo(
+              lock,
+              module.getName(),
+              module.getCommonJsModule()));
+    }
+    case config::Worker::Module::NODE_JS_COMPAT_MODULE: {
+      KJ_REQUIRE(featureFlags.getNodeJsCompat(),
+          "The nodejs_compat compatibility flag is required to use the nodeJsCompatModule type.");
+      return jsg::ModuleRegistry::ModuleInfo(
+          lock,
+          module.getName(),
+          kj::none,
+          jsg::ModuleRegistry::NodeJsModuleInfo(
+              lock,
+              module.getName(),
+              module.getNodeJsCompatModule()));
+    }
+    case config::Worker::Module::FALLBACK_SERVICE: {
+      // This case is not handled here. Look at compileModules.
+      return kj::none;
+    }
+  }
+  KJ_UNREACHABLE;
+}
+
 void WorkerdApiIsolate::compileModules(
     jsg::Lock& lockParam, config::Worker::Reader conf,
     Worker::ValidationErrorReporter& errorReporter,
@@ -279,95 +357,28 @@ void WorkerdApiIsolate::compileModules(
 
     for (auto module: conf.getModules()) {
       auto path = kj::Path::parse(module.getName());
+      auto info = tryCompileModule(lockParam, module, modules->getObserver(), getFeatureFlags());
 
-      switch (module.which()) {
-        case config::Worker::Module::TEXT: {
-          modules->add(
-              path,
-              jsg::ModuleRegistry::ModuleInfo(
-                  lock,
-                  module.getName(),
-                  kj::none,
-                  jsg::ModuleRegistry::TextModuleInfo(lock,
-                      Impl::compileTextGlobal(lock, module.getText()))));
-          break;
-        }
-        case config::Worker::Module::DATA: {
-          modules->add(
-              path,
-              jsg::ModuleRegistry::ModuleInfo(
-                  lock,
-                  module.getName(),
-                  kj::none,
-                  jsg::ModuleRegistry::DataModuleInfo(
-                      lock,
-                      Impl::compileDataGlobal(lock, module.getData()).As<v8::ArrayBuffer>())));
-          break;
-        }
-        case config::Worker::Module::WASM: {
-          modules->add(
-              path,
-              jsg::ModuleRegistry::ModuleInfo(
-                  lock,
-                  module.getName(),
-                  kj::none,
-                  jsg::ModuleRegistry::WasmModuleInfo(lock,
-                      Impl::compileWasmGlobal(lock, module.getWasm(), modules->getObserver()))));
-          break;
-        }
-        case config::Worker::Module::JSON: {
-          modules->add(
-              path,
-              jsg::ModuleRegistry::ModuleInfo(
-                  lock,
-                  module.getName(),
-                  kj::none,
-                  jsg::ModuleRegistry::JsonModuleInfo(lock,
-                      Impl::compileJsonGlobal(lock, module.getJson()))));
-          break;
-        }
-        case config::Worker::Module::ES_MODULE: {
-          modules->add(
-              path,
-              jsg::ModuleRegistry::ModuleInfo(
-                  lock,
-                  module.getName(),
-                  module.getEsModule(),
-                  jsg::ModuleInfoCompileOption::BUNDLE,
-                  modules->getObserver()));
-          break;
-        }
-        case config::Worker::Module::COMMON_JS_MODULE: {
-          modules->add(
-              path,
-              jsg::ModuleRegistry::ModuleInfo(
-                  lock,
-                  module.getName(),
-                  kj::none,
-                  jsg::ModuleRegistry::CommonJsModuleInfo(
-                      lock,
-                      module.getName(),
-                      module.getCommonJsModule())));
-          break;
-        }
-        case config::Worker::Module::NODE_JS_COMPAT_MODULE: {
-          KJ_REQUIRE(getFeatureFlags().getNodeJsCompat(),
-              "The nodejs_compat compatibility flag is required to use the nodeJsCompatModule type.");
-          modules->add(
-              path,
-              jsg::ModuleRegistry::ModuleInfo(
-                  lock,
-                  module.getName(),
-                  kj::none,
-                  jsg::ModuleRegistry::NodeJsModuleInfo(
-                      lock,
-                      module.getName(),
-                      module.getNodeJsCompatModule())));
-          break;
-        }
-        default: {
-          KJ_UNREACHABLE;
-        }
+      if (module.which() == config::Worker::Module::FALLBACK_SERVICE) {
+        // While this case is not *actually* a built-in module, the addBuiltModule
+        // method has the mechanism we need here with using a callback to supply
+        // the ModuleInfo lazily.
+        // TODO(cleanup): Rename this addBuiltinModule variant something better?
+        modules->addBuiltinModule(
+          module.getName(),
+          [specifier=module.getName(), &observer=modules->getObserver()]
+          (jsg::Lock& js, jsg::ModuleRegistry::ResolveMethod method) ->
+              kj::Maybe<jsg::ModuleRegistry::ModuleInfo> {
+            KJ_IF_SOME(fallback, jsg::IsolateBase::from(js.v8Isolate).tryGetModuleFallback()) {
+              return fallback(js, specifier, observer, method);
+            } else {
+              return kj::none;
+            }
+          },
+          jsg::ModuleType::BUNDLE
+        );
+      } else {
+        modules->add(path, kj::mv(KJ_REQUIRE_NONNULL(info)));
       }
     }
 
@@ -650,6 +661,12 @@ void WorkerdApiIsolate::compileGlobals(
       });
     }
   });
+}
+
+void WorkerdApiIsolate::setModuleFallbackCallback(
+    kj::Function<ModuleFallbackCallback>&& callback) const {
+  auto& isolateBase = const_cast<JsgWorkerdIsolate&>(impl->jsgIsolate);
+  isolateBase.setModuleFallbackCallback(kj::mv(callback));
 }
 
 // =======================================================================================

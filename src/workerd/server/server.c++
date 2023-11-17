@@ -638,7 +638,8 @@ kj::Own<Server::Service> Server::makeExternalService(
       auto rewriter = kj::heap<HttpRewriter>(conf.getHttp(), headerTableBuilder);
       auto addr = kj::heap<PromisedNetworkAddress>(network.parseAddress(addrStr, 80));
       return kj::heap<ExternalHttpService>(
-          kj::mv(addr), kj::mv(rewriter), globalContext->headerTable, timer, entropySource);
+          kj::mv(addr), kj::mv(rewriter), headerTableBuilder.getFutureTable(),
+          timer, entropySource);
     }
     case config::ExternalServer::HTTPS: {
       auto httpsConf = conf.getHttps();
@@ -650,7 +651,8 @@ kj::Own<Server::Service> Server::makeExternalService(
       auto addr = kj::heap<PromisedNetworkAddress>(
           makeTlsNetworkAddress(httpsConf.getTlsOptions(), addrStr, certificateHost, 443));
       return kj::heap<ExternalHttpService>(
-          kj::mv(addr), kj::mv(rewriter), globalContext->headerTable, timer, entropySource);
+          kj::mv(addr), kj::mv(rewriter), headerTableBuilder.getFutureTable(),
+          timer, entropySource);
     }
     case config::ExternalServer::TCP: {
       auto tcpConf = conf.getTcp();
@@ -1299,6 +1301,7 @@ public:
         worker(kj::mv(worker)),
         defaultEntrypointHandlers(kj::mv(defaultEntrypointHandlers)),
         waitUntilTasks(*this) {
+
     namedEntrypoints.reserve(namedEntrypointsParam.size());
     for (auto& ep: namedEntrypointsParam) {
       kj::StringPtr epPtr = ep.key;
@@ -2492,6 +2495,93 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
   // with the inspector service.
   KJ_IF_SOME(isolateRegistrar, inspectorIsolateRegistrar) {
     isolateRegistrar->registerIsolate(name, isolate.get());
+  }
+
+  if (conf.hasModuleFallback()) {
+    KJ_REQUIRE(experimental,
+               "The module fallback service is an experimental feature. "
+               "You must run workerd with `--experimental` to use this feature.");
+    // If the config has the moduleFallback option, then we are going to set up the ability
+    // to load certain modules from a fallback service. This is generally intended for local
+    // dev/testing purposes only.
+    auto& apiIsolate = isolate->getApiIsolate();
+    apiIsolate.setModuleFallbackCallback(
+        [address=kj::str(conf.getModuleFallback()), featureFlags=apiIsolate.getFeatureFlags()]
+        (jsg::Lock& js,
+         kj::StringPtr specifier,
+         jsg::CompilationObserver& observer,
+         jsg::ModuleRegistry::ResolveMethod method) mutable
+            -> kj::Maybe<jsg::ModuleRegistry::ModuleInfo> {
+      kj::Maybe<kj::String> jsonPayload;
+      {
+        // Module loading in workerd is expected to be synchronous but we need to perform
+        // an async HTTP request to the fallback service. To accomplish that we wrap the
+        // actual request in a kj::Thread, perform the GET, and drop the thread immediately
+        // so that the destructor joins the current thread (blocking it). The thread will
+        // either set the jsonPayload variable or not.
+        kj::Thread loaderThread(
+          [specifier,address=address.asPtr(),&jsonPayload, method]() mutable {
+          try {
+            const auto toStr = [](jsg::ModuleRegistry::ResolveMethod method) {
+              switch (method) {
+                case jsg::ModuleRegistry::ResolveMethod::IMPORT: return "import"_kjc;
+                case jsg::ModuleRegistry::ResolveMethod::REQUIRE: return "require"_kjc;
+              }
+              KJ_UNREACHABLE;
+            };
+
+            kj::AsyncIoContext io = kj::setupAsyncIo();
+
+            kj::HttpHeaderTable::Builder builder;
+            kj::HttpHeaderId kMethod = builder.add("x-resolve-method");
+            auto headerTable = builder.build();
+
+            auto addr = io.provider->getNetwork().parseAddress(address, 80).wait(io.waitScope);
+
+            auto client = kj::newHttpClient(
+                io.provider->getTimer(),
+                *headerTable,
+                *addr, {});
+
+            kj::HttpHeaders headers(*headerTable);
+            headers.set(kMethod, toStr(method));
+            headers.set(kj::HttpHeaderId::HOST, "localhost"_kj);
+
+            auto request = client->request(
+                kj::HttpMethod::GET,
+                kj::str("file://", specifier),
+                headers, kj::none);
+
+            auto resp = request.response.wait(io.waitScope);
+
+            if (resp.statusCode != 200) {
+              // Failed!
+              auto payload = resp.body->readAllText().wait(io.waitScope);
+              KJ_LOG(ERROR, "Fallback service failed to fetch module", payload);
+            } else {
+              jsonPayload = resp.body->readAllText().wait(io.waitScope);
+            }
+          } catch (...) {
+            auto exception = kj::getCaughtExceptionAsKj();
+            KJ_LOG(ERROR, "Fallback service failed to fetch module", exception);
+          }
+        });
+      }
+
+      KJ_IF_SOME(payload, jsonPayload) {
+        // The response from the fallback service must be a valid JSON serialization
+        // of the workerd module configuration.
+        capnp::MallocMessageBuilder moduleMessage;
+        capnp::JsonCodec json;
+        json.handleByAnnotation<config::Worker::Module>();
+        auto moduleBuilder = moduleMessage.initRoot<config::Worker::Module>();
+        json.decode(payload, moduleBuilder);
+
+        return WorkerdApiIsolate::tryCompileModule(js, moduleBuilder, observer, featureFlags);
+      } else {
+        return kj::none;
+      }
+    });
   }
 
   auto script = isolate->newScript(
