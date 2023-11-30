@@ -87,7 +87,10 @@ public:
 
   using ModuleFallbackCallback =
       kj::Maybe<jsg::ModuleRegistry::ModuleInfo>(
-          jsg::Lock&, kj::StringPtr, jsg::CompilationObserver&,
+          jsg::Lock&,
+          kj::StringPtr,
+          kj::Maybe<kj::String>,
+          jsg::CompilationObserver&,
           jsg::ModuleRegistry::ResolveMethod);
   inline void setModuleFallbackCallback(kj::Function<ModuleFallbackCallback>&& callback) {
     maybeModuleFallbackCallback = kj::mv(callback);

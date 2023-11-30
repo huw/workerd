@@ -340,8 +340,12 @@ public:
     REQUIRE,
   };
 
+  using ModuleCallback =
+      kj::Function<kj::Maybe<ModuleInfo>(Lock&,ResolveMethod, kj::Maybe<const kj::Path&>&)>;
+
   virtual kj::Maybe<ModuleInfo&> resolve(jsg::Lock& js,
                                          const kj::Path& specifier,
+                                         kj::Maybe<const kj::Path&> referrer = kj::none,
                                          ResolveOption option = ResolveOption::DEFAULT,
                                          ResolveMethod method = ResolveMethod::IMPORT) = 0;
 
@@ -370,6 +374,7 @@ v8::MaybeLocal<v8::Promise> dynamicImportCallback(v8::Local<v8::Context> context
 
 kj::Maybe<ModuleRegistry::ModuleInfo> tryResolveFromFallbackService(
     Lock& js, const kj::Path& specifier,
+    kj::Maybe<const kj::Path&>& referrer,
     CompilationObserver& observer,
     ModuleRegistry::ResolveMethod method);
 
@@ -438,7 +443,7 @@ public:
   }
 
   void addBuiltinModule(kj::StringPtr specifier,
-                        kj::Function<kj::Maybe<ModuleInfo>(Lock&,ResolveMethod)> factory,
+                        ModuleCallback factory,
                         Type type = Type::BUILTIN) {
     using Key = typename Entry::Key;
 
@@ -455,7 +460,8 @@ public:
 
   template <typename T>
   void addBuiltinModule(kj::StringPtr specifier, Type type = Type::BUILTIN) {
-    addBuiltinModule(specifier, [specifier=kj::str(specifier)](Lock& js, ResolveMethod)
+    addBuiltinModule(specifier, [specifier=kj::str(specifier)]
+        (Lock& js, ResolveMethod, kj::Maybe<const kj::Path&>&)
         -> kj::Maybe<ModuleInfo> {
       auto& wrapper = TypeWrapper::from(js.v8Isolate);
       auto wrap = wrapper.wrap(js.v8Context(), kj::none, alloc<T>());
@@ -465,34 +471,35 @@ public:
 
   kj::Maybe<ModuleInfo&> resolve(jsg::Lock& js,
                                  const kj::Path& specifier,
+                                 kj::Maybe<const kj::Path&> referrer = kj::none,
                                  ResolveOption option = ResolveOption::DEFAULT,
                                  ResolveMethod method = ResolveMethod::IMPORT) override {
     using Key = typename Entry::Key;
     if (option == ResolveOption::INTERNAL_ONLY) {
       KJ_IF_SOME(entry, entries.find(Key(specifier, Type::INTERNAL))) {
-        return entry.module(js, observer, method);
+        return entry.module(js, observer, referrer, method);
       }
     } else {
       if (option == ResolveOption::DEFAULT) {
         // First, we try to resolve a worker bundle version of the module.
         KJ_IF_SOME(entry, entries.find(Key(specifier, Type::BUNDLE))) {
-          return entry.module(js, observer, method);
+          return entry.module(js, observer, referrer, method);
         }
       }
       // Then we look for a built-in version of the module.
       KJ_IF_SOME(entry, entries.find(Key(specifier, Type::BUILTIN))) {
-        return entry.module(js, observer, method);
+        return entry.module(js, observer, referrer, method);
       }
     }
 
     // If the module is not found and we have a module fallback service configured,
     // let's try that as a means of looking it up.
-    KJ_IF_SOME(info, tryResolveFromFallbackService(js, specifier, observer, method)) {
+    KJ_IF_SOME(info, tryResolveFromFallbackService(js, specifier, referrer, observer, method)) {
       // If we resolved a module from the fallback service, we have to be sure
       // to add it to the registry...
       add(const_cast<kj::Path&>(specifier), kj::mv(info));
       auto& entry = KJ_ASSERT_NONNULL(entries.find(Key(specifier, Type::BUNDLE)));
-      return entry.module(js, observer, method);
+      return entry.module(js, observer, referrer, method);
     }
 
     return kj::none;
@@ -532,7 +539,7 @@ public:
       resolveOption = ModuleRegistry::ResolveOption::INTERNAL_ONLY;
     }
 
-    KJ_IF_SOME(info, resolve(js, specifier, resolveOption)) {
+    KJ_IF_SOME(info, resolve(js, specifier, referrer, resolveOption)) {
       KJ_IF_SOME(func, dynamicImportHandler) {
         auto handler = [&info, isolate = js.v8Isolate]() -> Value {
           auto& js = Lock::from(isolate);
@@ -554,7 +561,7 @@ public:
   Value resolveInternalImport(jsg::Lock& js, const kj::StringPtr specifier) override {
     auto specifierPath = kj::Path(specifier);
     auto resolveOption = jsg::ModuleRegistry::ResolveOption::INTERNAL_ONLY;
-    auto maybeModuleInfo = resolve(js, specifierPath, resolveOption);
+    auto maybeModuleInfo = resolve(js, specifierPath, kj::none, resolveOption);
     auto moduleInfo = &KJ_REQUIRE_NONNULL(maybeModuleInfo, "No such module \"", specifier, "\".");
     auto handle = moduleInfo->module.getHandle(js);
     jsg::instantiateModule(js, handle);
@@ -573,9 +580,7 @@ private:
   // we need to be able to search it by path (filename) as well as search for a specific module
   // object by identity. We use a kj::Table!
   struct Entry {
-    using Info = kj::OneOf<ModuleInfo,
-                           kj::ArrayPtr<const char>,
-                           kj::Function<kj::Maybe<ModuleInfo>(Lock&,ResolveMethod)>>;
+    using Info = kj::OneOf<ModuleInfo, kj::ArrayPtr<const char>, ModuleCallback>;
 
     struct Key {
       const kj::Path& specifier;
@@ -606,8 +611,7 @@ private:
           type(type),
           info(src) {}
 
-    Entry(const kj::Path& specifier, Type type,
-          kj::Function<kj::Maybe<ModuleInfo>(Lock&,ResolveMethod)> factory)
+    Entry(const kj::Path& specifier, Type type, ModuleCallback factory)
         : specifier(specifier.clone()),
           type(type),
           info(kj::mv(factory)) {}
@@ -618,6 +622,7 @@ private:
     // Lazily instantiate module from source code if needed
     kj::Maybe<ModuleInfo&> module(jsg::Lock& js,
                                   CompilationObserver& observer,
+                                  kj::Maybe<const kj::Path&> referrer,
                                   ModuleRegistry::ResolveMethod method =
                                       ModuleRegistry::ResolveMethod::IMPORT) {
       KJ_SWITCH_ONEOF(info) {
@@ -628,8 +633,8 @@ private:
           info = ModuleInfo(js, specifier.toString(), src, ModuleInfoCompileOption::BUILTIN, observer);
           return info.tryGet<ModuleInfo>();
         }
-        KJ_CASE_ONEOF(src, kj::Function<kj::Maybe<ModuleInfo>(Lock&,ResolveMethod)>) {
-          KJ_IF_SOME(result, src(js, method)) {
+        KJ_CASE_ONEOF(src, ModuleCallback) {
+          KJ_IF_SOME(result, src(js, method, referrer)) {
             info = kj::mv(result);
           }
           return info.tryGet<ModuleInfo>();

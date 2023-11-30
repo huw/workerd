@@ -69,7 +69,7 @@ v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
         ref.specifier.parent().eval(spec) :
         kj::Path::parse(spec);
 
-    KJ_IF_SOME(resolved, registry->resolve(js, targetPath,
+    KJ_IF_SOME(resolved, registry->resolve(js, targetPath, ref.specifier,
         internalOnly ?
             ModuleRegistry::ResolveOption::INTERNAL_ONLY :
             ModuleRegistry::ResolveOption::DEFAULT)) {
@@ -82,7 +82,7 @@ v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
       // is using the prefix itself. (which isn't likely but is possible).
       // We only need to do this if internalOnly is false.
       if (!internalOnly && (spec.startsWith("node:") || spec.startsWith("cloudflare:"))) {
-        KJ_IF_SOME(resolve, registry->resolve(js, kj::Path::parse(spec),
+        KJ_IF_SOME(resolve, registry->resolve(js, kj::Path::parse(spec), ref.specifier,
              ModuleRegistry::ResolveOption::DEFAULT)) {
           result = resolve.module.getHandle(js);
           return;
@@ -251,7 +251,7 @@ v8::Local<v8::Value> CommonJsModuleContext::require(jsg::Lock& js, kj::String sp
   // permitted to require worker bundle or built-in modules. Internal modules are
   // excluded.
   auto& info = JSG_REQUIRE_NONNULL(
-      modulesForResolveCallback->resolve(js, targetPath,
+      modulesForResolveCallback->resolve(js, targetPath, path,
                                          ModuleRegistry::ResolveOption::DEFAULT,
                                          ModuleRegistry::ResolveMethod::REQUIRE),
       Error, "No such module \"", targetPath.toString(), "\".");
@@ -594,7 +594,7 @@ v8::Local<v8::Value> NodeJsModuleContext::require(jsg::Lock& js, kj::String spec
   // permitted to require worker bundle or built-in modules. Internal modules are
   // excluded.
   auto& info = JSG_REQUIRE_NONNULL(
-      modulesForResolveCallback->resolve(js, targetPath, resolveOption,
+      modulesForResolveCallback->resolve(js, targetPath, path, resolveOption,
                                          ModuleRegistry::ResolveMethod::REQUIRE),
       Error, "No such module \"", targetPath.toString(), "\".");
   // Adding imported from suffix here not necessary like it is for resolveCallback, since we have a
@@ -675,11 +675,16 @@ kj::StringPtr NodeJsModuleObject::getPath() { return path; }
 
 kj::Maybe<ModuleRegistry::ModuleInfo> tryResolveFromFallbackService(
     Lock& js, const kj::Path& specifier,
+    kj::Maybe<const kj::Path&>& referrer,
     CompilationObserver& observer,
     ModuleRegistry::ResolveMethod method) {
   auto& isolateBase = IsolateBase::from(js.v8Isolate);
   KJ_IF_SOME(fallback, isolateBase.tryGetModuleFallback()) {
-    return fallback(js, specifier.toString(true), observer, method);
+    kj::Maybe<kj::String> maybeRef;
+    KJ_IF_SOME(ref, referrer) {
+      maybeRef = ref.toString(true);
+    }
+    return fallback(js, specifier.toString(true), kj::mv(maybeRef), observer, method);
   }
   return kj::none;
 }

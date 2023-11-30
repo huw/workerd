@@ -351,7 +351,6 @@ void WorkerdApiIsolate::compileModules(
     jsg::Lock& lockParam, config::Worker::Reader conf,
     Worker::ValidationErrorReporter& errorReporter,
     capnp::List<config::Extension>::Reader extensions) const {
-  auto& lock = kj::downcast<JsgWorkerdIsolate::Lock>(lockParam);
   lockParam.withinHandleScope([&] {
     auto modules = jsg::ModuleRegistryImpl<JsgWorkerdIsolate_TypeWrapper>::from(lockParam);
 
@@ -367,10 +366,19 @@ void WorkerdApiIsolate::compileModules(
         modules->addBuiltinModule(
           module.getName(),
           [specifier=module.getName(), &observer=modules->getObserver()]
-          (jsg::Lock& js, jsg::ModuleRegistry::ResolveMethod method) ->
+          (jsg::Lock& js, jsg::ModuleRegistry::ResolveMethod method,
+           kj::Maybe<const kj::Path&>& referrer) ->
               kj::Maybe<jsg::ModuleRegistry::ModuleInfo> {
             KJ_IF_SOME(fallback, jsg::IsolateBase::from(js.v8Isolate).tryGetModuleFallback()) {
-              return fallback(js, specifier, observer, method);
+              kj::Maybe<kj::String> maybeRef;
+              KJ_IF_SOME(ref, referrer) {
+                maybeRef = ref.toString(true);
+              }
+              return fallback(js,
+                  specifier,
+                  kj::mv(maybeRef),
+                  observer,
+                  method);
             } else {
               return kj::none;
             }
@@ -604,7 +612,7 @@ static v8::Local<v8::Value> createBindingValue(
       auto moduleName = kj::Path::parse(wrapped.moduleName);
 
       // wrapped bindings can be produced by internal modules only
-      KJ_IF_SOME(moduleInfo, moduleRegistry->resolve(lock, moduleName,
+      KJ_IF_SOME(moduleInfo, moduleRegistry->resolve(lock, moduleName, kj::none,
            jsg::ModuleRegistry::ResolveOption::INTERNAL_ONLY)) {
         // obtain the module
         auto module = moduleInfo.module.getHandle(lock);

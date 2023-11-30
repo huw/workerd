@@ -2509,6 +2509,7 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
         [address=kj::str(conf.getModuleFallback()), featureFlags=apiIsolate.getFeatureFlags()]
         (jsg::Lock& js,
          kj::StringPtr specifier,
+         kj::Maybe<kj::String> referrer,
          jsg::CompilationObserver& observer,
          jsg::ModuleRegistry::ResolveMethod method) mutable
             -> kj::Maybe<jsg::ModuleRegistry::ModuleInfo> {
@@ -2520,7 +2521,11 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
         // so that the destructor joins the current thread (blocking it). The thread will
         // either set the jsonPayload variable or not.
         kj::Thread loaderThread(
-          [specifier,address=address.asPtr(),&jsonPayload, method]() mutable {
+          [specifier,
+           referrer=kj::mv(referrer),
+           address=address.asPtr(),
+           &jsonPayload,
+           method]() mutable {
           try {
             const auto toStr = [](jsg::ModuleRegistry::ResolveMethod method) {
               switch (method) {
@@ -2541,16 +2546,47 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
             auto client = kj::newHttpClient(
                 io.provider->getTimer(),
                 *headerTable,
-                *addr, {});
+                *addr, { });
 
             kj::HttpHeaders headers(*headerTable);
             headers.set(kMethod, toStr(method));
             headers.set(kj::HttpHeaderId::HOST, "localhost"_kj);
 
+            kj::Url url;
+            bool prefixed = false;
+            // TODO(cleanup): This is a bit of a hack based on the current
+            // design of the module registry loader algorithms handling of
+            // prefixed modules. This will be simplified with the upcoming
+            // module registry refactor.
+            KJ_IF_SOME(pos, specifier.findLast('/')) {
+              auto segment = specifier.slice(pos + 1);
+              if (segment.startsWith("node:") ||
+                  segment.startsWith("cloudflare:") ||
+                  segment.startsWith("workerd:")) {
+                url.query.add(kj::Url::QueryParam {
+                  .name = kj::str("specifier"),
+                  .value = kj::str(segment)
+                });
+                prefixed = true;
+              }
+            }
+            if (!prefixed) {
+              url.query.add(
+                kj::Url::QueryParam { kj::str("specifier"), kj::str(specifier) }
+              );
+            }
+
+            KJ_IF_SOME(ref, referrer) {
+              url.query.add(
+                kj::Url::QueryParam { kj::str("referrer"), kj::mv(ref) }
+              );
+            }
+
             auto request = client->request(
                 kj::HttpMethod::GET,
-                kj::str("file://", specifier),
-                headers, kj::none);
+                url.toString(kj::Url::HTTP_REQUEST),
+                headers,
+                kj::none);
 
             auto resp = request.response.wait(io.waitScope);
 
