@@ -27,9 +27,39 @@ struct DawnRemoteSerializer : public dawn::wire::CommandSerializer {
   };
 };
 
-class FooMain {
+class VoodooMain : public kj::TaskSet::ErrorHandler {
 public:
-  FooMain(kj::ProcessContext& context) : context(context) {}
+  VoodooMain(kj::ProcessContext& context)
+      : context(context), tasks(*this), nativeProcs(dawn::native::GetProcs()) {}
+
+  struct ServerContext {
+    kj::Own<kj::AsyncIoStream> stream;
+
+    ServerContext(kj::Own<kj::AsyncIoStream>&& stream, DawnProcTable* nativeProcs,
+                  wgpu::Instance instance)
+        : stream(kj::mv(stream)) {
+      KJ_DBG("server created");
+
+      // setup wire
+      auto serializer = kj::heap<DawnRemoteSerializer>();
+      dawn::wire::WireServerDescriptor wDesc{
+          .serializer = serializer,
+          .procs = nativeProcs,
+      };
+
+      // TODO: this calls GetMaximumAllocationSize() immediately which currently throws
+      // but the "not implemented" message is lost.
+      auto wireServer = kj::heap<dawn::wire::WireServer>(wDesc);
+
+      wireServer->InjectInstance(instance.Get(), 1, 0);
+
+      KJ_DBG("all done");
+    }
+  };
+
+  void taskFailed(kj::Exception&& exception) override {
+    kj::throwFatalException(kj::mv(exception));
+  }
 
   kj::MainBuilder::Validity setListenPath(kj::StringPtr path) {
     listenPath = path;
@@ -37,14 +67,11 @@ public:
   }
 
   kj::MainBuilder::Validity startServer() {
-    KJ_DBG(listenPath, "would start listening server");
+    KJ_DBG(listenPath, "will start listening server");
 
     // initialize dawn
-    auto nativeProcs = dawn::native::GetProcs();
     dawnProcSetProcs(&nativeProcs);
-
-    auto instance = kj::heap<dawn::native::Instance>();
-    auto adapters = instance->EnumerateAdapters();
+    auto adapters = instance.EnumerateAdapters();
     KJ_REQUIRE(!adapters.empty(), "no GPU adapters found");
 
     // initialize event loop
@@ -58,15 +85,7 @@ public:
     auto listener = addr->listen();
 
     // process requests
-
-    // setup wire
-    auto serializer = kj::heap<DawnRemoteSerializer>();
-    dawn::wire::WireServerDescriptor wDesc{
-        .serializer = serializer,
-        .procs = &nativeProcs,
-    };
-    auto wireServer = kj::heap<dawn::wire::WireServer>(wDesc);
-    wireServer->InjectInstance(instance->Get(), 1, 0);
+    acceptLoop(kj::mv(listener));
 
     kj::NEVER_DONE.wait(io.waitScope);
   }
@@ -78,9 +97,24 @@ public:
         .build();
   }
 
+  void acceptLoop(kj::Own<kj::ConnectionReceiver>&& listener) {
+    auto ptr = listener.get();
+    tasks.add(ptr->accept().then(
+        [this, listener = kj::mv(listener)](kj::Own<kj::AsyncIoStream>&& connection) mutable {
+          acceptLoop(kj::mv(listener));
+
+          auto server = kj::heap<ServerContext>(kj::mv(connection), &nativeProcs, instance.Get());
+
+          tasks.add(server->stream->whenWriteDisconnected().attach(kj::mv(server)));
+        }));
+  }
+
 private:
   kj::StringPtr listenPath;
   kj::ProcessContext& context;
+  kj::TaskSet tasks;
+  DawnProcTable nativeProcs;
+  dawn::native::Instance instance;
 };
 
-KJ_MAIN(FooMain)
+KJ_MAIN(VoodooMain)
