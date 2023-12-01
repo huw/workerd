@@ -372,7 +372,7 @@ v8::MaybeLocal<v8::Promise> dynamicImportCallback(v8::Local<v8::Context> context
                                                   v8::Local<v8::String> specifier,
                                                   v8::Local<v8::FixedArray> import_assertions);
 
-kj::Maybe<ModuleRegistry::ModuleInfo> tryResolveFromFallbackService(
+kj::Maybe<kj::OneOf<kj::String, ModuleRegistry::ModuleInfo>> tryResolveFromFallbackService(
     Lock& js, const kj::Path& specifier,
     kj::Maybe<const kj::Path&>& referrer,
     CompilationObserver& observer,
@@ -406,7 +406,7 @@ public:
   }
 
   void add(kj::Path& specifier, ModuleInfo&& info) {
-    entries.insert(Entry(specifier, Type::BUNDLE, kj::fwd<ModuleInfo>(info)));
+    entries.insert(kj::heap<Entry>(specifier, Type::BUNDLE, kj::fwd<ModuleInfo>(info)));
   }
 
   void addBuiltinBundle(Bundle::Reader bundle, kj::Maybe<Type> maybeFilter = kj::none) {
@@ -439,7 +439,7 @@ public:
       return;
     }
 
-    entries.insert(Entry(path, type, sourceCode));
+    entries.insert(kj::heap<Entry>(path, type, sourceCode));
   }
 
   void addBuiltinModule(kj::StringPtr specifier,
@@ -455,7 +455,7 @@ public:
       return;
     }
 
-    entries.insert(Entry(path, type, kj::mv(factory)));
+    entries.insert(kj::heap<Entry>(path, type, kj::mv(factory)));
   }
 
   template <typename T>
@@ -477,44 +477,61 @@ public:
     using Key = typename Entry::Key;
     if (option == ResolveOption::INTERNAL_ONLY) {
       KJ_IF_SOME(entry, entries.find(Key(specifier, Type::INTERNAL))) {
-        return entry.module(js, observer, referrer, method);
+        return entry->module(js, observer, referrer, method);
       }
     } else {
       if (option == ResolveOption::DEFAULT) {
         // First, we try to resolve a worker bundle version of the module.
         KJ_IF_SOME(entry, entries.find(Key(specifier, Type::BUNDLE))) {
-          return entry.module(js, observer, referrer, method);
+          return entry->module(js, observer, referrer, method);
         }
       }
       // Then we look for a built-in version of the module.
       KJ_IF_SOME(entry, entries.find(Key(specifier, Type::BUILTIN))) {
-        return entry.module(js, observer, referrer, method);
+        return entry->module(js, observer, referrer, method);
       }
     }
 
     // If the module is not found and we have a module fallback service configured,
     // let's try that as a means of looking it up.
+    auto str = specifier.toString(true);
+    KJ_IF_SOME(found, fallbackServiceRedirects.find(str)) {
+      // The fallback service has already given us a redirect response for this specifier.
+      // let's use it to try to resolve.
+      return resolve(js, specifier.parent().eval(found), referrer, option, method);
+    }
     KJ_IF_SOME(info, tryResolveFromFallbackService(js, specifier, referrer, observer, method)) {
       // If we resolved a module from the fallback service, we have to be sure
       // to add it to the registry...
-      add(const_cast<kj::Path&>(specifier), kj::mv(info));
-      auto& entry = KJ_ASSERT_NONNULL(entries.find(Key(specifier, Type::BUNDLE)));
-      return entry.module(js, observer, referrer, method);
+      KJ_SWITCH_ONEOF(info) {
+        KJ_CASE_ONEOF(i, ModuleInfo) {
+          add(const_cast<kj::Path&>(specifier), kj::mv(i));
+          auto& entry = KJ_ASSERT_NONNULL(entries.find(Key(specifier, Type::BUNDLE)));
+          return entry->module(js, observer, referrer, method);
+        }
+        KJ_CASE_ONEOF(s, kj::String) {
+          // If a kj::String is returned, it means the fallback service is redirecting
+          // us to another module that should already be in the registry... or could
+          // itself end up calling back to the fallback service.
+          fallbackServiceRedirects.upsert(kj::str(str), kj::str(s));
+          return resolve(js, specifier.parent().eval(s), referrer, option, method);
+        }
+      }
     }
 
     return kj::none;
   }
 
   kj::Maybe<ModuleRef> resolve(jsg::Lock& js, v8::Local<v8::Module> module) override {
-    for (const Entry& entry : entries) {
+    for (const kj::Own<Entry>& entry : entries) {
       // Unfortunately we cannot use entries.find(...) in here because the module info can
       // be initialized lazily at any point after the entry is indexed, making the lookup
       // by module a bit problematic. Iterating through the entries is slower but it works.
-      KJ_IF_SOME(info, entry.info.template tryGet<ModuleInfo>()) {
+      KJ_IF_SOME(info, entry->info.template tryGet<ModuleInfo>()) {
         if (info.hashCode() == module->GetIdentityHash()) {
           return ModuleRef {
-            .specifier = entry.specifier,
-            .type = entry.type,
+            .specifier = entry->specifier,
+            .type = entry->type,
             .module = const_cast<ModuleInfo&>(info),
           };
         }
@@ -647,10 +664,12 @@ private:
   struct SpecifierHashCallbacks {
     using Key = typename Entry::Key;
 
-    const Key keyForRow(const Entry& row) const { return Key(row.specifier, row.type); }
+    const Key keyForRow(const kj::Own<Entry>& row) const {
+      return Key(row->specifier, row->type);
+    }
 
-    bool matches(const Entry& row, Key key) const {
-      return row.specifier == key.specifier && row.type == key.type;
+    bool matches(const kj::Own<Entry>& row, Key key) const {
+      return row->specifier == key.specifier && row->type == key.type;
     }
 
     uint hashCode(Key key) const {
@@ -658,7 +677,8 @@ private:
     }
   };
 
-  kj::Table<Entry, kj::HashIndex<SpecifierHashCallbacks>> entries;
+  kj::Table<kj::Own<Entry>, kj::HashIndex<SpecifierHashCallbacks>> entries;
+  kj::HashMap<kj::String, kj::String> fallbackServiceRedirects;
 };
 
 template <typename TypeWrapper>

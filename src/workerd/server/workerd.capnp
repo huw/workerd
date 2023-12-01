@@ -264,10 +264,6 @@ struct Worker {
       # (a) allows for importing Node.js-compat built-ins without the node: specifier-prefix
       # (b) exposes the subset of common Node.js globals such as process, Buffer, etc that
       #     we implement in the workerd runtime.
-
-      fallbackService @8 :Void;
-      # A module whose type and content is determined dynamically by calling out to
-      # the configured module fallback service, if any.
     }
   }
 

@@ -339,10 +339,6 @@ kj::Maybe<jsg::ModuleRegistry::ModuleInfo> WorkerdApiIsolate::tryCompileModule(
               module.getName(),
               module.getNodeJsCompatModule()));
     }
-    case config::Worker::Module::FALLBACK_SERVICE: {
-      // This case is not handled here. Look at compileModules.
-      return kj::none;
-    }
   }
   KJ_UNREACHABLE;
 }
@@ -357,37 +353,7 @@ void WorkerdApiIsolate::compileModules(
     for (auto module: conf.getModules()) {
       auto path = kj::Path::parse(module.getName());
       auto info = tryCompileModule(lockParam, module, modules->getObserver(), getFeatureFlags());
-
-      if (module.which() == config::Worker::Module::FALLBACK_SERVICE) {
-        // While this case is not *actually* a built-in module, the addBuiltModule
-        // method has the mechanism we need here with using a callback to supply
-        // the ModuleInfo lazily.
-        // TODO(cleanup): Rename this addBuiltinModule variant something better?
-        modules->addBuiltinModule(
-          module.getName(),
-          [specifier=module.getName(), &observer=modules->getObserver()]
-          (jsg::Lock& js, jsg::ModuleRegistry::ResolveMethod method,
-           kj::Maybe<const kj::Path&>& referrer) ->
-              kj::Maybe<jsg::ModuleRegistry::ModuleInfo> {
-            KJ_IF_SOME(fallback, jsg::IsolateBase::from(js.v8Isolate).tryGetModuleFallback()) {
-              kj::Maybe<kj::String> maybeRef;
-              KJ_IF_SOME(ref, referrer) {
-                maybeRef = ref.toString(true);
-              }
-              return fallback(js,
-                  specifier,
-                  kj::mv(maybeRef),
-                  observer,
-                  method);
-            } else {
-              return kj::none;
-            }
-          },
-          jsg::ModuleType::BUNDLE
-        );
-      } else {
-        modules->add(path, kj::mv(KJ_REQUIRE_NONNULL(info)));
-      }
+      modules->add(path, kj::mv(KJ_REQUIRE_NONNULL(info)));
     }
 
     api::registerModules(*modules, getFeatureFlags());

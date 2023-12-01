@@ -10,8 +10,7 @@ const helloWorldExample :Workerd.Config = (
 
 const helloWorld :Workerd.Worker = (
   modules = [
-    (name = "worker", esModule = embed "worker.js"),
-    (name = "foo", fallbackService = void ),
+    (name = "worker", esModule = embed "worker.js")
   ],
   compatibilityDate = "2023-02-28",
   moduleFallback = "localhost:8888",

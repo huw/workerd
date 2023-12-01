@@ -86,7 +86,7 @@ public:
   }
 
   using ModuleFallbackCallback =
-      kj::Maybe<jsg::ModuleRegistry::ModuleInfo>(
+      kj::Maybe<kj::OneOf<kj::String, jsg::ModuleRegistry::ModuleInfo>>(
           jsg::Lock&,
           kj::StringPtr,
           kj::Maybe<kj::String>,

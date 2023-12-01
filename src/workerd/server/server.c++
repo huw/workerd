@@ -2512,8 +2512,43 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
          kj::Maybe<kj::String> referrer,
          jsg::CompilationObserver& observer,
          jsg::ModuleRegistry::ResolveMethod method) mutable
-            -> kj::Maybe<jsg::ModuleRegistry::ModuleInfo> {
+            -> kj::Maybe<kj::OneOf<kj::String, jsg::ModuleRegistry::ModuleInfo>> {
       kj::Maybe<kj::String> jsonPayload;
+      bool redirect = false;
+      bool prefixed = false;
+      kj::Url url;
+      kj::StringPtr actualSpecifier = nullptr;
+      // TODO(cleanup): This is a bit of a hack based on the current
+      // design of the module registry loader algorithms handling of
+      // prefixed modules. This will be simplified with the upcoming
+      // module registry refactor.
+      KJ_IF_SOME(pos, specifier.findLast('/')) {
+        auto segment = specifier.slice(pos + 1);
+        if (segment.startsWith("node:") ||
+            segment.startsWith("cloudflare:") ||
+            segment.startsWith("workerd:")) {
+          actualSpecifier = segment;
+          url.query.add(kj::Url::QueryParam {
+            .name = kj::str("specifier"),
+            .value = kj::str(segment)
+          });
+          prefixed = true;
+        }
+      }
+      if (!prefixed) {
+        actualSpecifier = specifier;
+        url.query.add(
+          kj::Url::QueryParam { kj::str("specifier"), kj::str(specifier) }
+        );
+      }
+      KJ_IF_SOME(ref, referrer) {
+        url.query.add(
+          kj::Url::QueryParam { kj::str("referrer"), kj::mv(ref) }
+        );
+      }
+
+      auto spec = url.toString(kj::Url::HTTP_REQUEST);
+
       {
         // Module loading in workerd is expected to be synchronous but we need to perform
         // an async HTTP request to the fallback service. To accomplish that we wrap the
@@ -2521,10 +2556,11 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
         // so that the destructor joins the current thread (blocking it). The thread will
         // either set the jsonPayload variable or not.
         kj::Thread loaderThread(
-          [specifier,
+          [&spec,
            referrer=kj::mv(referrer),
            address=address.asPtr(),
            &jsonPayload,
+           &redirect,
            method]() mutable {
           try {
             const auto toStr = [](jsg::ModuleRegistry::ResolveMethod method) {
@@ -2552,45 +2588,19 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
             headers.set(kMethod, toStr(method));
             headers.set(kj::HttpHeaderId::HOST, "localhost"_kj);
 
-            kj::Url url;
-            bool prefixed = false;
-            // TODO(cleanup): This is a bit of a hack based on the current
-            // design of the module registry loader algorithms handling of
-            // prefixed modules. This will be simplified with the upcoming
-            // module registry refactor.
-            KJ_IF_SOME(pos, specifier.findLast('/')) {
-              auto segment = specifier.slice(pos + 1);
-              if (segment.startsWith("node:") ||
-                  segment.startsWith("cloudflare:") ||
-                  segment.startsWith("workerd:")) {
-                url.query.add(kj::Url::QueryParam {
-                  .name = kj::str("specifier"),
-                  .value = kj::str(segment)
-                });
-                prefixed = true;
+            auto request = client->request(kj::HttpMethod::GET, spec, headers, kj::none);
+
+            kj::HttpClient::Response resp = request.response.wait(io.waitScope);
+
+            if (resp.statusCode == 301) {
+              // The fallback service responded with a redirect.
+              KJ_IF_SOME(loc, resp.headers->get(kj::HttpHeaderId::LOCATION)) {
+                redirect = true;
+                jsonPayload = kj::str(loc);
+              } else {
+                KJ_LOG(ERROR, "Fallback service returned a redirect with no location");
               }
-            }
-            if (!prefixed) {
-              url.query.add(
-                kj::Url::QueryParam { kj::str("specifier"), kj::str(specifier) }
-              );
-            }
-
-            KJ_IF_SOME(ref, referrer) {
-              url.query.add(
-                kj::Url::QueryParam { kj::str("referrer"), kj::mv(ref) }
-              );
-            }
-
-            auto request = client->request(
-                kj::HttpMethod::GET,
-                url.toString(kj::Url::HTTP_REQUEST),
-                headers,
-                kj::none);
-
-            auto resp = request.response.wait(io.waitScope);
-
-            if (resp.statusCode != 200) {
+            } else if (resp.statusCode != 200) {
               // Failed!
               auto payload = resp.body->readAllText().wait(io.waitScope);
               KJ_LOG(ERROR, "Fallback service failed to fetch module", payload);
@@ -2605,6 +2615,9 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
       }
 
       KJ_IF_SOME(payload, jsonPayload) {
+        if (redirect) {
+          return kj::Maybe(kj::mv(payload));
+        }
         // The response from the fallback service must be a valid JSON serialization
         // of the workerd module configuration.
         capnp::MallocMessageBuilder moduleMessage;
@@ -2612,6 +2625,16 @@ kj::Own<Server::Service> Server::makeWorker(kj::StringPtr name, config::Worker::
         json.handleByAnnotation<config::Worker::Module>();
         auto moduleBuilder = moduleMessage.initRoot<config::Worker::Module>();
         json.decode(payload, moduleBuilder);
+
+        // If the module fallback service returns a name in the module then it has to
+        // match the specifier we passed in. This is an optional sanity check.
+        if (moduleBuilder.hasName() && moduleBuilder.getName() != actualSpecifier) {
+          KJ_LOG(ERROR,
+                 "Fallback service failed to fetch module: returned module "
+                 "name does not match specifier",
+                 moduleBuilder.getName(), actualSpecifier);
+          return kj::none;
+        }
 
         return WorkerdApiIsolate::tryCompileModule(js, moduleBuilder, observer, featureFlags);
       } else {

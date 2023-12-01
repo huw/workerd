@@ -673,7 +673,7 @@ void NodeJsModuleObject::setExports(jsg::Value value) {
 
 kj::StringPtr NodeJsModuleObject::getPath() { return path; }
 
-kj::Maybe<ModuleRegistry::ModuleInfo> tryResolveFromFallbackService(
+kj::Maybe<kj::OneOf<kj::String, ModuleRegistry::ModuleInfo>> tryResolveFromFallbackService(
     Lock& js, const kj::Path& specifier,
     kj::Maybe<const kj::Path&>& referrer,
     CompilationObserver& observer,

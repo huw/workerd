@@ -508,7 +508,7 @@ public:
 
   // Set the module fallback service callback, if any.
   using ModuleFallbackCallback =
-      kj::Maybe<jsg::ModuleRegistry::ModuleInfo>(
+      kj::Maybe<kj::OneOf<kj::String, jsg::ModuleRegistry::ModuleInfo>>(
           jsg::Lock& js,
           kj::StringPtr,
           kj::Maybe<kj::String>,
