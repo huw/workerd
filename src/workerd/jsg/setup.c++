@@ -271,11 +271,15 @@ namespace {
   }
 }
 
-IsolateBase::IsolateBase(const V8System& system, v8::Isolate::CreateParams&& createParams, kj::Own<IsolateObserver> observer)
+IsolateBase::IsolateBase(const V8System& system,
+                         v8::Isolate::CreateParams&& createParams,
+                         kj::Own<IsolateObserver> observer,
+                         kj::Maybe<IsolateLimitEnforcer&> maybeLimits)
     : system(system),
       ptr(newIsolate(kj::mv(createParams))),
       heapTracer(ptr),
-      observer(kj::mv(observer)) {
+      observer(kj::mv(observer)),
+      maybeLimits(maybeLimits) {
   V8StackScope stackScope;
 
   v8::CppHeapCreateParams params {

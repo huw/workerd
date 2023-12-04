@@ -123,7 +123,11 @@ struct WorkerdApi::Impl {
        IsolateLimitEnforcer& limitEnforcer,
        kj::Own<jsg::IsolateObserver> observer)
       : features(capnp::clone(featuresParam)),
-        jsgIsolate(v8System, Configuration(*this), kj::mv(observer), limitEnforcer.getCreateParams()) {}
+        jsgIsolate(v8System,
+                   Configuration(*this),
+                   kj::mv(observer),
+                   limitEnforcer.getCreateParams(),
+                   limitEnforcer) {}
 
   static v8::Local<v8::String> compileTextGlobal(JsgWorkerdIsolate::Lock& lock,
       capnp::Text::Reader reader) {

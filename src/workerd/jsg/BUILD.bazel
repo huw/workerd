@@ -18,6 +18,7 @@ wd_cc_library(
         exclude = [
             "exception.h",
             "observer.h",
+            "limits.h",
             "rtti.h",
         ],
     ) + ["//src/workerd/util:autogate.h"],
@@ -26,6 +27,7 @@ wd_cc_library(
         ":exception",
         ":modules_capnp",
         ":observer",
+        ":limits",
         ":url",
         "//src/workerd/util",
         "//src/workerd/util:sentry",
@@ -107,6 +109,15 @@ wd_cc_capnp_library(
 wd_cc_library(
     name = "observer",
     hdrs = ["observer.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@capnp-cpp//src/kj",
+    ],
+)
+
+wd_cc_library(
+    name = "limits",
+    hdrs = ["limits.h"],
     visibility = ["//visibility:public"],
     deps = [
         "@capnp-cpp//src/kj",

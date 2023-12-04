@@ -10,6 +10,7 @@
 #include <openssl/ec.h>
 #include <openssl/rsa.h>
 #include <openssl/crypto.h>
+#include <workerd/jsg/setup.h>
 
 namespace workerd::api {
 namespace {
@@ -208,6 +209,29 @@ bool CryptoKey::Impl::equals(const kj::Array<kj::byte>& other) const {
 
 ZeroOnFree::~ZeroOnFree() noexcept(false) {
   OPENSSL_cleanse(inner.begin(), inner.size());
+}
+
+void checkKdfLimits(jsg::Lock& js, size_t iterations) {
+  auto& base = jsg::IsolateBase::from(js.v8Isolate);
+  // First we check to see if the limit enforcer has been set on the isolate.
+  KJ_IF_SOME(limits, base.tryGetLimitEnforcer()) {
+    // Nice, we have a limit enforcer... let's check it. If the call to checkKdfIterations
+    // returns a value, that implies that we're asking for too many iterations and need
+    // to throw.
+    KJ_IF_SOME(max, limits.checkKdfIterations(js, iterations)) {
+      JSG_FAIL_REQUIRE(DOMNotSupportedError,
+          kj::str("Pbkdf2 failed: iteration counts above ", max ," are not supported (requested ",
+                  iterations, ")."));
+    }
+    // If we got here, we're good to go! The number of iterations is acceptable.
+  } else {
+    // If the limit enforcer is not specified, then we'll fall back to our originally
+    // enforced limit of 100,000 max iterations.
+    JSG_REQUIRE(iterations <= 100'000, DOMNotSupportedError,
+                "Pbkdf2 failed: iteration counts above 100000 are not supported (requested ",
+                iterations, ").");
+    // If we got here, we're good to go! The number of iterations is acceptable.
+  }
 }
 
 }  // namespace workerd::api

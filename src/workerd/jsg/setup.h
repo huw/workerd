@@ -13,6 +13,7 @@
 #include <kj/map.h>
 #include <kj/mutex.h>
 #include <workerd/jsg/observer.h>
+#include <workerd/jsg/limits.h>
 
 namespace workerd::jsg {
 
@@ -104,7 +105,14 @@ public:
   // Returns a random UUID for this isolate instance.
   kj::StringPtr getUuid();
 
-  IsolateObserver& getObserver() { return *observer; }
+  inline IsolateObserver& getObserver() { return *observer; }
+
+  inline kj::Maybe<IsolateLimitEnforcer&> tryGetLimitEnforcer() {
+    return maybeLimits.map([](IsolateLimitEnforcer& limits)
+        -> IsolateLimitEnforcer& {
+      return limits;
+    });
+  }
 
 private:
   template <typename TypeWrapper>
@@ -186,7 +194,9 @@ private:
   kj::TreeMap<uintptr_t, CodeBlockInfo> codeMap;
 
   explicit IsolateBase(const V8System& system, v8::Isolate::CreateParams&& createParams,
-    kj::Own<IsolateObserver> observer);
+                       kj::Own<IsolateObserver> observer,
+                       kj::Maybe<IsolateLimitEnforcer&> limits = kj::none);
+
   ~IsolateBase() noexcept(false);
   KJ_DISALLOW_COPY_AND_MOVE(IsolateBase);
 
@@ -217,6 +227,7 @@ private:
   HeapTracer heapTracer;
   std::unique_ptr<v8::CppHeap> cppgcHeap;
   kj::Own<IsolateObserver> observer;
+  kj::Maybe<IsolateLimitEnforcer&> maybeLimits;
 
   friend class Data;
   friend class Wrappable;
@@ -291,8 +302,9 @@ public:
   explicit Isolate(const V8System& system,
       MetaConfiguration&& configuration,
       kj::Own<IsolateObserver> observer,
-      v8::Isolate::CreateParams createParams = {})
-      : IsolateBase(system, kj::mv(createParams), kj::mv(observer)),
+      v8::Isolate::CreateParams createParams = {},
+      kj::Maybe<IsolateLimitEnforcer&> maybeLimits = kj::none)
+      : IsolateBase(system, kj::mv(createParams), kj::mv(observer), kj::mv(maybeLimits)),
         wrapper(wrapperSpace.construct(ptr, kj::fwd<MetaConfiguration>(configuration))) {
           wrapper->initTypeWrapper();
         }

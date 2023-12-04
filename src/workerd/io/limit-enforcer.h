@@ -5,6 +5,7 @@
 #pragma once
 
 #include <workerd/jsg/jsg.h>
+#include <workerd/jsg/limits.h>
 #include <workerd/io/observer.h>
 
 namespace workerd {
@@ -15,7 +16,7 @@ class IoContext;
 // Interface for an object that enforces resource limits on an Isolate level.
 //
 // See also LimitEnforcer, which enforces on a per-request level.
-class IsolateLimitEnforcer {
+class IsolateLimitEnforcer: public jsg::IsolateLimitEnforcer {
 public:
   // Get CreateParams to pass when constructing a new isolate.
   virtual v8::Isolate::CreateParams getCreateParams() = 0;
@@ -57,6 +58,19 @@ public:
 
   // Report resource usage metrics to the given isolate metrics object.
   virtual void reportMetrics(IsolateObserver& isolateMetrics) const = 0;
+
+  // Called when performing a cypto key derivation function (like pbkdf2) to determine if
+  // if the requested number of iterations is acceptable. If kj::none is returned, the
+  // number of iterations requested is acceptable. If a number is returned, the requested
+  // iterations is unacceptable and the return value specifies the maximum.
+  virtual kj::Maybe<size_t> checkKdfIterations(jsg::Lock& js, size_t iterations) override {
+    // By default, historically we've limited this to 100,000 iterations max. We'll set
+    // that as the default for now. To set a default of no-limit, this would be changed
+    // to return kj::none.
+    static constexpr size_t MAX = 100'000;
+    if (iterations > MAX) return MAX;
+    return kj::none;
+  }
 };
 
 // Abstract interface that enforces resource limits on a IoContext.

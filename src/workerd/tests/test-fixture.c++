@@ -170,7 +170,9 @@ struct MockIsolateLimitEnforcer final: public IsolateLimitEnforcer {
     void completedRequest(kj::StringPtr id) const override {}
     bool exitJs(jsg::Lock& lock) const override { return false; }
     void reportMetrics(IsolateObserver& isolateMetrics) const override {}
-
+    kj::Maybe<size_t> checkKdfIterations(jsg::Lock& lock, size_t iterations) override {
+      return kj::none;
+    }
 };
 
 struct MockErrorReporter final: public Worker::ValidationErrorReporter {
