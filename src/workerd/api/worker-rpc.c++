@@ -115,24 +115,11 @@ public:
         // JS RPC is not enabled on the server side, we cannot call any methods.
         auto rpcDisabled =
             "The receiving Worker does not allow its methods to be called over RPC."_kjc;
-        auto serialized = serializeV8(js, js.error(rpcDisabled));
-        auto builder = callContext.initResults(
-            capnp::MessageSize { serialized.size() / 8 + 8, 0 }).initException();
-        builder.setV8Serialized(kj::mv(serialized));
-        return kj::READY_NOW;
+        JSG_FAIL_REQUIRE(Error, rpcDisabled);
       }
 
       // We will try to get the function, if we can't we'll throw an error to the client.
-      auto maybeFn = tryGetFn(lock, entrypointName, ctx, methodName);
-      KJ_IF_SOME(e, maybeFn.tryGet<kj::String>()) {
-        auto serialized = serializeV8(js, js.error(e));
-        auto builder = callContext.initResults(
-            capnp::MessageSize { serialized.size() / 8 + 8, 0 }).initException();
-        builder.setV8Serialized(kj::mv(serialized));
-        return kj::READY_NOW;
-      }
-
-      auto fn = KJ_REQUIRE_NONNULL(maybeFn.tryGet<v8::Local<v8::Function>>());
+      auto fn = tryGetFn(lock, entrypointName, ctx, methodName);
 
       // We have a function, so let's call it and serialize the result for RPC.
       // We account for both the JS method throwing and our serialization attempt failing.
@@ -158,11 +145,6 @@ public:
     }).then([callFulfiller = kj::mv(callFulfiller)]() mutable {
       // We want to fulfill the callPromise so customEvent can continue executing.
       callFulfiller->fulfill();
-    }).catch_([](kj::Exception&& e) {
-      if (auto desc = e.getDescription();
-          !jsg::isTunneledException(desc) && !jsg::isDoNotLogException(desc)) {
-        LOG_EXCEPTION("JsRpcTargetCall"_kj, e);
-      }
     });
   }
 
@@ -198,7 +180,7 @@ private:
   }
 
   // If the `methodName` is a known public method, we'll return it.
-  inline kj::OneOf<v8::Local<v8::Function>, kj::String> tryGetFn(
+  inline v8::Local<v8::Function> tryGetFn(
       Worker::Lock& lock,
       kj::Maybe<kj::StringPtr> entrypointName,
       IoContext& ctx,
@@ -209,7 +191,8 @@ private:
 
     auto handle = handler.self.getHandle(lock);
     if (verifyCallable(lock, handle, methodName)) {
-      return kj::str("'", methodName, "' is a registered method and cannot be called over RPC."_kj);
+      JSG_FAIL_REQUIRE(Error,
+          kj::str("'", methodName, "' is a registered method and cannot be called over RPC."_kj));
     }
     auto methodStr = jsg::v8StrIntern(lock.getIsolate(), methodName);
     auto fnHandle = jsg::check(handle->Get(lock.getContext(), methodStr));
@@ -223,7 +206,8 @@ private:
     // against that changing in the future.
     if (!fnHandle->IsFunction() || (!privHandle.IsEmpty() && privHandle->IsPrivate())) {
       // We can't return this because it's not a function, or if it is, it's private.
-      return kj::str("The RPC receiver does not implement the requested method."_kj);
+      JSG_FAIL_REQUIRE(Error,
+          "The RPC receiver does not implement the requested method."_kjc);
     }
     return fnHandle.As<v8::Function>();
   }
