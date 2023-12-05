@@ -242,27 +242,6 @@ private:
   // The serialized JS value.
   using SerializedResult = kj::OneOf<Returned, ThrewException>;
 
-  // Serializes the return value of our method.
-  SerializedResult serialize(jsg::Lock& js, jsg::JsValue value) {
-    kj::Maybe<SerializedResult> result;
-
-    js.tryCatch([&] {
-      auto data = serializeV8(js, value.addRef(js).getHandle(js));
-      // Serialized okay!
-      result = Returned { .serializedValue = kj::mv(data) };
-    }, [this, &js, &result](jsg::Value exception) {
-      auto errorMessage = kj::str(jsg::check(exception.getHandle(js)->ToString(js.v8Context())));
-
-      // Failed to serialize data.
-      auto failedResult = serialize(js, js.error(errorMessage));
-      // The second call to serialize must succeed, so let's extract the result and
-      // be clear that we failed to serialize the first time.
-      result = ThrewException {
-          .serializedException = kj::mv(failedResult.get<Returned>().serializedValue) };
-    });
-    return kj::mv(KJ_REQUIRE_NONNULL(result));
-  }
-
   // Invokes the given function and serializes the result for RPC.
   jsg::Promise<SerializedResult> callFuncAndSerialize(
       jsg::Lock& js,
@@ -308,18 +287,12 @@ private:
   jsg::Promise<SerializedResult> processAsyncResult(
       jsg::Lock& js,
       jsg::Promise<jsg::Value> promise) {
-    return promise.then(js, [this] (jsg::Lock& lock, jsg::Value value) mutable {
+    return promise.then(js, [] (jsg::Lock& lock, jsg::Value value) -> SerializedResult {
       auto jsVal = jsg::JsValue(value.getHandle(lock));
-      return serialize(lock, kj::mv(jsVal));
-    }).catch_(js, [this](jsg::Lock& lock, jsg::Value exception) mutable {
+      return Returned { .serializedValue = serializeV8(lock, jsVal) };
+    }).catch_(js, [](jsg::Lock& lock, jsg::Value exception) -> SerializedResult {
       auto jsVal = jsg::JsValue(exception.getHandle(lock));
-      auto result = serialize(lock, jsVal);
-      // We are in the error branch, so regardless of if serialization succeeded we've
-      // caught an exception.
-      KJ_IF_SOME(ser, result.tryGet<Returned>()) {
-        result = ThrewException { .serializedException = kj::mv(ser.serializedValue) };
-      }
-      return kj::mv(result);
+      return ThrewException { .serializedException = serializeV8(lock, jsVal) };
     });
   }
 
