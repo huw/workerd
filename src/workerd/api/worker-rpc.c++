@@ -292,7 +292,16 @@ private:
       return Returned { .serializedValue = serializeV8(lock, jsVal) };
     }).catch_(js, [](jsg::Lock& lock, jsg::Value exception) -> SerializedResult {
       auto jsVal = jsg::JsValue(exception.getHandle(lock));
-      return ThrewException { .serializedException = serializeV8(lock, jsVal) };
+      return lock.tryCatch([&] {
+        // First, we'll try serializing this value.
+        return ThrewException { .serializedException = serializeV8(lock, jsVal) };
+      }, [&](jsg::Value) {
+        // We failed to serialize the result, let's just throw an exception back to the client.
+        lock.throwException(kj::mv(exception));
+        KJ_UNREACHABLE;
+        // Compiler wants to see a return type...
+        return ThrewException {};
+      });
     });
   }
 
