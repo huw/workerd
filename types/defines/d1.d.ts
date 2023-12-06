@@ -23,7 +23,7 @@ interface D1ExecResult {
 declare abstract class D1Database {
   prepare(query: string): D1PreparedStatement;
   dump(): Promise<ArrayBuffer>;
-  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  batch<const T extends unknown[]>(statements: D1PreparedStatement[]): Promise<{ [I in keyof T]: D1Result<T[I]>[] }>;
   exec(query: string): Promise<D1ExecResult>;
 }
 
